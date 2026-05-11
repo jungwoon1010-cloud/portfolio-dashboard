@@ -281,6 +281,44 @@ function parseSheet(rows) {
   return stocks;
 }
 
+// ── 누계 시트 ──
+async function fetchHistory() {
+  const {key,sid} = S.cfg;
+  if(!key||!sid) return;
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent('누계')}!A1:Q40?key=${key}`;
+    const res = await fetch(url);
+    const d = await res.json();
+    if(d.error) return;
+    const rows = d.values||[];
+    // 행 구조: A=DATE, B=적용환율, L=자산합계, M=자산증감, N=자산증감율, P=입출금반영증감, Q=증감율
+    // 7행(index6): 실시간
+    // 이달: 현재월 행 찾기
+    // 연간: 연도 합계 행 찾기
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    const thisMonth = now.getMonth()+1;
+    let monthly = null, yearly = null;
+    rows.forEach(row => {
+      const dateStr = String(row[0]||'').trim();
+      const changePct = String(row[13]||'').replace('%','').trim(); // N열=인덱스13
+      const changeAmt = String(row[12]||'').replace(/[,\s]/g,'').trim(); // M열=인덱스12
+      // 이달: "2026년 5월" 패턴
+      if(dateStr.includes(thisYear+'년')&&dateStr.includes(thisMonth+'월')&&!dateStr.includes('합계')) {
+        monthly = { pct: parseFloat(changePct)||0, amt: parseFloat(changeAmt)||0 };
+      }
+      // 연간: "2026년 합계" 패턴
+      if(dateStr.includes(thisYear+'년')&&dateStr.includes('합계')) {
+        // Q열(인덱스16)=증감율, P열(인덱스15)=입출금반영증감
+        const yPct = String(row[16]||'').replace('%','').trim();
+        const yAmt = String(row[15]||'').replace(/[,\s]/g,'').trim();
+        yearly = { pct: parseFloat(yPct)||0, amt: parseFloat(yAmt)||0 };
+      }
+    });
+    S.history = { monthly, yearly };
+  } catch(e) { S.history = null; }
+}
+
 // ── Yahoo Finance ──
 // corsproxy.io 만 사용 (확인된 작동)
 const PROXIES = [
@@ -363,6 +401,7 @@ async function loadAll() {
     S.stocks=parseSheet(rows);
     el.innerHTML=`<div class="ld"><div class="ld-dots"><span>●</span><span>●</span><span>●</span></div><div style="margin-top:12px;">가격 수집 중 (${S.stocks.filter(s=>!s.isCash).length}종목)...</div></div>`;
     await fetchAllPrices();
+    await fetchHistory();
     S.loaded=true;
     renderBriefing();
     const ok=document.getElementById('set-ok');
@@ -427,13 +466,13 @@ function renderBriefing() {
     </div>
     <div class="kpi">
       <div class="kl">이달 수익률</div>
-      <div class="kv neu">—</div>
-      <div class="kd">누계 탭 연동 예정</div>
+      <div class="kv ${S.history?.monthly ? C(S.history.monthly.pct) : 'neu'}">${S.history?.monthly ? F.pct(S.history.monthly.pct) : '—'}</div>
+      <div class="kd ${S.history?.monthly ? C(S.history.monthly.amt) : 'neu'}">${S.history?.monthly ? (S.history.monthly.amt>=0?'+':'')+F.won(S.history.monthly.amt)+'원' : '누계 탭 연동 중'}</div>
     </div>
     <div class="kpi">
       <div class="kl">연간 수익률</div>
-      <div class="kv neu">—</div>
-      <div class="kd">누계 탭 연동 예정</div>
+      <div class="kv ${S.history?.yearly ? C(S.history.yearly.pct) : 'neu'}">${S.history?.yearly ? F.pct(S.history.yearly.pct) : '—'}</div>
+      <div class="kd ${S.history?.yearly ? C(S.history.yearly.amt) : 'neu'}">${S.history?.yearly ? (S.history.yearly.amt>=0?'+':'')+F.won(S.history.yearly.amt)+'원' : '누계 탭 연동 중'}</div>
     </div>
   </div>`;
 
