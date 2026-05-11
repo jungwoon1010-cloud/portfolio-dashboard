@@ -51,7 +51,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .gtw{display:flex;align-items:center;padding:13px 18px;min-width:155px;border-right:1px solid var(--border);}
 .gt{font-size:12px;font-weight:500;}
 .gst{display:flex;flex:1;}
-.gc{flex:1;padding:9px 14px;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;}
+.gc{flex:1;padding:9px 14px;border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;min-width:0;}
 .gc:last-of-type{border-right:none;}
 .gcl{font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.05em;}
 .gcv{font-family:var(--mono);font-size:13px;font-weight:500;white-space:nowrap;}
@@ -307,10 +307,12 @@ async function fetchHistory() {
       const dateStr = String(row[1]||'').trim();
       const totalAsset = parseFloat(String(row[12]||'').replace(/,/g,''))||0;
       const monthStr = thisYear+'년';
-      // 실시간 행
+      // 실시간 행: [12]=자산합계 [15]=입출금 [16]=입출금반영증감 [17]=입출금반영증감율
       if(dateStr==='실시간') {
         realtimeAsset = totalAsset;
         S._monthlyDeposit = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
+        S._monthlyNetAmt  = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
+        S._monthlyNetPct  = parseFloat(String(row[17]||'').replace('%',''))||0;
       }
       // 전월 말
       const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
@@ -325,8 +327,10 @@ async function fetchHistory() {
         yearly = { pct: yPct, amt: yAmt };
       }
     });
-    // 이달 수익률 = (실시간 - 전월말 - 이달입금) / 전월말 (입출금 제외)
-    if(realtimeAsset>0&&prevMonthAsset>0) {
+    // 이달 수익률 - 실시간 행의 입출금반영 값 직접 사용
+    if(S._monthlyNetAmt) {
+      monthly = { pct: S._monthlyNetPct||0, amt: S._monthlyNetAmt };
+    } else if(realtimeAsset>0&&prevMonthAsset>0) {
       const deposit = S._monthlyDeposit||0;
       const diff = realtimeAsset - prevMonthAsset - deposit;
       monthly = { pct: diff/prevMonthAsset*100, amt: diff };
