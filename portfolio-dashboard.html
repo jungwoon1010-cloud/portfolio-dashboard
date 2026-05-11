@@ -264,13 +264,16 @@ function parseSheet(rows) {
     if(market!=='US'&&market!=='KR') return;
     if(cat1) lastCat1=cat1;
     if(cat2) lastCat2=cat2;
-    // 현금성 자산 목록 (티커 기준) — 가격은 Yahoo, 현금 비중에 포함
-    const CASH_LIKE = ['SGOV'];
-    const isCashLike = CASH_LIKE.includes(ticker);
+    // 현금성 자산 티커 목록 — 현금비중에 포함, 가격은 Yahoo로 계산
+    const CASH_LIKE_TICKERS = ['SGOV'];
+    const isCashLike = CASH_LIKE_TICKERS.includes(ticker);
+    // 현금성 자산 이름 키워드 — 현금비중에 포함, 금액은 qty 그대로
+    const CASH_LIKE_NAMES = ['MMF','RP/Cash','현금'];
+    const isCashName = CASH_LIKE_NAMES.some(k=>name.includes(k));
     // 순수 현금/보증금/청약: 티커 없고 금액만 있는 경우
-    if(name==='현금'||!ticker) {
+    if(!ticker||isCashName) {
       const amt = qty>0 ? qty : buyPx>0 ? buyPx : parseNum(row[row.length-1]);
-      if(amt>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:'CASH_'+name,buyPx:0,qty:amt,isCash:true,isCashLike:false});
+      if(amt>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:ticker||'CASH_'+name,buyPx:0,qty:amt,isCash:true,isCashLike:false});
       return;
     }
     stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker,buyPx,qty,isCash:false,isCashLike});
