@@ -326,13 +326,13 @@ async function fetchHistory() {
         yearDeposit += deposit;
       }
     });
-    // 이달 수익률 = (실시간 - 전월말 - 이달입금) / 전월말
+    // 이달 수익률 = (실시간 - 전월말) / 전월말
+    // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
+    console.log('[누계] realtime:', realtimeAsset, 'prevMonth:', prevMonthAsset, 'yearStart:', yearStartAsset, 'yearDeposit:', yearDeposit);
     if(realtimeAsset>0 && prevMonthAsset>0) {
       const diff = realtimeAsset - prevMonthAsset;
-      // 이달 입금은 실시간 행 deposit에서 읽기 어려우므로 자산증감으로 근사
       monthly = { pct: diff/prevMonthAsset*100, amt: diff };
     }
-    // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
     if(realtimeAsset>0 && yearStartAsset>0) {
       const netDiff = realtimeAsset - yearStartAsset - yearDeposit;
       yearly = { pct: netDiff/yearStartAsset*100, amt: netDiff };
