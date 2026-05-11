@@ -299,29 +299,33 @@ async function fetchHistory() {
     const thisYear = now.getFullYear();
     const thisMonth = now.getMonth()+1;
     let monthly = null, yearly = null;
+    let realtimeAsset = 0, prevMonthAsset = 0;
     rows.forEach(row => {
-      // 실제 시트 구조:
-      // [0]=빈칸 [1]=DATE [2]=환율 [3]=USD주식 [4]=RP/CASH(USD) [5]=KRW주식 [6]=RP/CASH(KRW)
-      // [7]=연금저축 [8]=주택청약 [9]=보증금 [10]=USD자산 [11]=KRW자산 [12]=자산합계
-      // [13]=자산증감 [14]=자산증감율 [15]=입출금 [16]=입출금반영증감 [17]=증감율
       const dateStr = String(row[1]||'').trim();
-      const changePct = String(row[14]||'').replace('%','').trim();
-      const changeAmt = String(row[13]||'').replace(/,/g,'').trim();
-      // 이달: "2026년 5월" 패턴 — 공백 포함 유연하게 매칭
+      const totalAsset = parseFloat(String(row[12]||'').replace(/,/g,''))||0;
       const monthStr = thisYear+'년';
-      const monthNum = thisMonth+'월';
-      if(dateStr.includes(monthStr)&&dateStr.includes(monthNum)&&!dateStr.includes('합계')) {
-        monthly = { pct: parseFloat(changePct)||0, amt: parseFloat(changeAmt)||0 };
-        console.log('[누계] 이달 찾음:', dateStr, changePct, changeAmt);
+      // 실시간 행 → 현재 자산
+      if(dateStr==='실시간') {
+        realtimeAsset = totalAsset;
+      }
+      // 전월 말 → 직전달 행 (이달 기준 전달)
+      const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
+      const prevYear  = thisMonth===1 ? thisYear-1 : thisYear;
+      if(dateStr.includes(prevYear+'년')&&dateStr.includes(prevMonth+'월')&&!dateStr.includes('합계')) {
+        prevMonthAsset = totalAsset;
       }
       // 연간: "2026년 합계" 패턴
       if(dateStr.includes(monthStr)&&dateStr.includes('합계')) {
-        const yPct = String(row[17]||'').replace('%','').trim();
-        const yAmt = String(row[16]||'').replace(/,/g,'').trim();
-        yearly = { pct: parseFloat(yPct)||0, amt: parseFloat(yAmt)||0 };
-        console.log('[누계] 연간 찾음:', dateStr, yPct, yAmt);
+        const yPct = parseFloat(String(row[17]||'').replace('%',''))||0;
+        const yAmt = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
+        yearly = { pct: yPct, amt: yAmt };
       }
     });
+    // 이달 수익률 = (실시간 - 전월말) / 전월말
+    if(realtimeAsset>0&&prevMonthAsset>0) {
+      const diff = realtimeAsset - prevMonthAsset;
+      monthly = { pct: diff/prevMonthAsset*100, amt: diff };
+    }
     S.history = { monthly, yearly };
   } catch(e) { S.history = null; }
 }
