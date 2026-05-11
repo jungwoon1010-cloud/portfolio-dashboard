@@ -264,11 +264,11 @@ function parseSheet(rows) {
     if(market!=='US'&&market!=='KR') return;
     if(cat1) lastCat1=cat1;
     if(cat2) lastCat2=cat2;
-    if(name==='현금') {
-      stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:'CASH_'+market,buyPx:0,qty,isCash:true});
+    // 현금/보증금/청약 등: 티커 없고 qty에 금액 있는 경우
+    if(name==='현금'||!ticker) {
+      if(qty>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:'CASH_'+name,buyPx:0,qty,isCash:true});
       return;
     }
-    if(!ticker) return;
     stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker,buyPx,qty,isCash:false});
   });
   return stocks;
