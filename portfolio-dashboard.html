@@ -264,16 +264,16 @@ function parseSheet(rows) {
     if(market!=='US'&&market!=='KR') return;
     if(cat1) lastCat1=cat1;
     if(cat2) lastCat2=cat2;
-    // 현금성 자산 목록 (티커 기준)
-    const CASH_TICKERS = ['SGOV'];
-    const isCashTicker = CASH_TICKERS.includes(ticker);
-    // 현금/보증금/청약 등: 티커 없고 금액만 있는 경우
-    if(name==='현금'||!ticker||isCashTicker) {
+    // 현금성 자산 목록 (티커 기준) — 가격은 Yahoo, 현금 비중에 포함
+    const CASH_LIKE = ['SGOV'];
+    const isCashLike = CASH_LIKE.includes(ticker);
+    // 순수 현금/보증금/청약: 티커 없고 금액만 있는 경우
+    if(name==='현금'||!ticker) {
       const amt = qty>0 ? qty : buyPx>0 ? buyPx : parseNum(row[row.length-1]);
-      if(amt>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:ticker||'CASH_'+name,buyPx,qty:amt,isCash:true});
+      if(amt>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:'CASH_'+name,buyPx:0,qty:amt,isCash:true,isCashLike:false});
       return;
     }
-    stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker,buyPx,qty,isCash:false});
+    stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker,buyPx,qty,isCash:false,isCashLike});
   });
   return stocks;
 }
@@ -377,7 +377,8 @@ function renderBriefing() {
   S.stocks.forEach(s=>{totalEval+=evalKRW(s);totalBuy+=buyKRW(s);});
   const totalPnl=totalEval-totalBuy;
   const totalPct=totalBuy>0?totalPnl/totalBuy*100:0;
-  const cashAmt=S.stocks.filter(s=>s.isCash).reduce((a,s)=>a+s.qty,0);
+  const cashAmt=S.stocks.filter(s=>s.isCash).reduce((a,s)=>a+s.qty,0)
+    + S.stocks.filter(s=>s.isCashLike).reduce((a,s)=>a+evalKRW(s),0);
   const cashPct=totalEval>0?cashAmt/totalEval*100:0;
   const cashOk=cashPct>=S.cfg.cashMin&&cashPct<=S.cfg.cashMax;
   const fxCur=S.fx?.cur;
