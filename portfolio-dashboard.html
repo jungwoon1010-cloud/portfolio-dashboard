@@ -291,11 +291,9 @@ function parseSheet(rows) {
 }
 
 // ── Yahoo Finance ──
-// CORS 프록시 목록 (순서대로 시도)
+// corsproxy.io 만 사용 (확인된 작동)
 const PROXIES = [
-  t => `https://corsproxy.io/?${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=60d')}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=60d')}`,
-  t => `https://thingproxy.freeboard.io/fetch/https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=60d`,
+  t => 'https://corsproxy.io/?'+encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=60d'),
 ];
 
 async function fetchPrice(ticker) {
