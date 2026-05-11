@@ -307,10 +307,10 @@ async function fetchHistory() {
       const dateStr = String(row[1]||'').trim();
       const totalAsset = parseFloat(String(row[12]||'').replace(/,/g,''))||0;
       const deposit    = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
-      // 실시간 행
+      // 실시간 행: [12]=자산합계 [15]=입출금 [16]=입출금반영증감
       if(dateStr==='실시간') {
         realtimeAsset = totalAsset;
-        S._monthlyDeposit = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
+        S._monthlyNetAmt = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
       }
       // 전월 말
       const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
@@ -331,9 +331,10 @@ async function fetchHistory() {
     // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
     console.log('[누계] realtime:', realtimeAsset, 'prevMonth:', prevMonthAsset, 'yearStart:', yearStartAsset, 'yearDeposit:', yearDeposit);
     if(realtimeAsset>0 && prevMonthAsset>0) {
-      const deposit = S._monthlyDeposit||0;
-      const diff = realtimeAsset - prevMonthAsset - deposit;
-      monthly = { pct: diff/prevMonthAsset*100, amt: diff };
+      // [16] 입출금반영증감을 직접 사용
+      const netAmt = S._monthlyNetAmt || (realtimeAsset - prevMonthAsset);
+      const pct = netAmt / prevMonthAsset * 100;
+      monthly = { pct, amt: netAmt };
     }
     if(realtimeAsset>0 && yearStartAsset>0) {
       const netDiff = realtimeAsset - yearStartAsset - yearDeposit;
