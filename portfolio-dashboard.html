@@ -243,21 +243,40 @@ function parseNum(v) {
 }
 
 function parseSheet(rows) {
-  // A=번호 B=카테고리1 C=카테고리2 D=시장 E=Name F=티커 G=매수주가 H=매수주식수
+  // 실제 시트 구조 (콘솔 확인):
+  // A(0)=번호 B(1)=카테고리1 C(2)=카테고리2 D(3)=카테고리2b E(4)=시장 F(5)=Name G(6)=티커 H(7)=매수주가 I(8)=매수주식수
+  // 헤더행: 번호,카테고리1,카테고리2,시장,Name,티커,매수주가,매수주식수
   const stocks=[];
   let lastCat1='', lastCat2='';
   rows.forEach(row=>{
     if(!row||row.length<5) return;
     const no = String(row[0]||'').trim();
     // 헤더행 스킵
-    if(no==='번호'||no==='NO'||no==='No') return;
+    if(no==='번호'||no==='NO'||no==='No'||isNaN(no)&&!no) return;
     const cat1  = String(row[1]||'').trim() || lastCat1;
     const cat2  = String(row[2]||'').trim() || lastCat2;
-    const market= String(row[3]||'').trim().toUpperCase();
-    const name  = String(row[4]||'').trim();
-    const ticker= String(row[5]||'').trim().toUpperCase();
-    const buyPx = parseNum(row[6]);
-    const qty   = parseNum(row[7]);
+    // D열이 카테고리2 세부이거나 시장일 수 있으므로 E열이 US/KR 인지 확인
+    const col3  = String(row[3]||'').trim();
+    const col4  = String(row[4]||'').trim();
+    // 시장 판별: US 또는 KR 이 있는 열 찾기
+    let market, name, ticker, buyPx, qty;
+    if(col3==='US'||col3==='KR') {
+      // D=시장, E=Name, F=티커, G=매수주가, H=매수주식수
+      market = col3.toUpperCase();
+      name   = col4;
+      ticker = String(row[5]||'').trim().toUpperCase();
+      buyPx  = parseNum(row[6]);
+      qty    = parseNum(row[7]);
+    } else if(col4==='US'||col4==='KR') {
+      // E=시장, F=Name, G=티커, H=매수주가, I=매수주식수
+      market = col4.toUpperCase();
+      name   = String(row[5]||'').trim();
+      ticker = String(row[6]||'').trim().toUpperCase();
+      buyPx  = parseNum(row[7]);
+      qty    = parseNum(row[8]);
+    } else {
+      return; // 시장 구분 못하면 스킵
+    }
     if(!name) return;
     if(cat1) lastCat1=cat1;
     if(cat2) lastCat2=cat2;
@@ -274,9 +293,9 @@ function parseSheet(rows) {
 // ── Yahoo Finance ──
 // CORS 프록시 목록 (순서대로 시도)
 const PROXIES = [
-  t => `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=60d`)}`,
-  t => `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=60d`)}`,
-  t => `https://cors-anywhere.herokuapp.com/https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=60d`,
+  t => `https://corsproxy.io/?${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=60d')}`,
+  t => `https://api.allorigins.win/raw?url=${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t+'?interval=1d&range=60d')}`,
+  t => `https://thingproxy.freeboard.io/fetch/https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1d&range=60d`,
 ];
 
 async function fetchPrice(ticker) {
