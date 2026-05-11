@@ -301,31 +301,36 @@ async function fetchHistory() {
     let monthly = null, yearly = null;
     let realtimeAsset = 0, prevMonthAsset = 0;
     rows.forEach(row => {
-      // A열 빈칸 → B열(인덱스1)=DATE, L열(인덱스11)=자산합계, M열(인덱스12)=자산증감
-      // N열(인덱스13)=증감율, Q열(인덱스16)=입출금반영증감, R열(인덱스17)=증감율
+      // 실제 인덱스 (A열 빈칸 기준):
+      // [1]=DATE [11]=자산합계 [12]=자산증감 [13]=증감율%
+      // [14]=입출금 [15]=입출금반영증감 [16]=입출금반영증감율%
+      // 이달 입금 누적은 실시간 행 [14]에서 읽음
       const dateStr = String(row[1]||'').trim();
       const totalAsset = parseFloat(String(row[11]||'').replace(/,/g,''))||0;
       const monthStr = thisYear+'년';
-      // 실시간 행 → 현재 자산
+      // 실시간 행
       if(dateStr==='실시간') {
         realtimeAsset = totalAsset;
+        // 이달 입출금 (누계 시트 실시간 행 [14])
+        S._monthlyDeposit = parseFloat(String(row[14]||'').replace(/,/g,''))||0;
       }
-      // 전월 말 → 직전달 행
+      // 전월 말
       const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
       const prevYear  = thisMonth===1 ? thisYear-1 : thisYear;
       if(dateStr.includes(prevYear+'년')&&dateStr.includes(prevMonth+'월')&&!dateStr.includes('합계')) {
         prevMonthAsset = totalAsset;
       }
-      // 연간: "2026년 합계" 패턴
+      // 연간 합계: [15]=입출금반영증감, [16]=입출금반영증감율
       if(dateStr.includes(monthStr)&&dateStr.includes('합계')) {
-        const yPct = parseFloat(String(row[17]||'').replace('%',''))||0;
-        const yAmt = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
+        const yPct = parseFloat(String(row[15]||'').replace('%',''))||0;
+        const yAmt = parseFloat(String(row[14]||'').replace(/,/g,''))||0;
         yearly = { pct: yPct, amt: yAmt };
       }
     });
-    // 이달 수익률 = (실시간 - 전월말) / 전월말
+    // 이달 수익률 = (실시간 - 전월말 - 이달입금) / 전월말 (입출금 제외)
     if(realtimeAsset>0&&prevMonthAsset>0) {
-      const diff = realtimeAsset - prevMonthAsset;
+      const deposit = S._monthlyDeposit||0;
+      const diff = realtimeAsset - prevMonthAsset - deposit;
       monthly = { pct: diff/prevMonthAsset*100, amt: diff };
     }
     S.history = { monthly, yearly };
