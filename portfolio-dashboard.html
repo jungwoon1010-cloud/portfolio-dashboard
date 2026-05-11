@@ -299,20 +299,17 @@ async function fetchHistory() {
     const thisYear = now.getFullYear();
     const thisMonth = now.getMonth()+1;
     let monthly = null, yearly = null;
-    let realtimeAsset = 0, prevMonthAsset = 0;
+    let realtimeAsset = 0, prevMonthAsset = 0, yearStartAsset = 0, yearDeposit = 0;
     rows.forEach(row => {
       // 실제 인덱스 (A열 빈칸 기준):
       // [1]=DATE [11]=자산합계 [12]=자산증감 [13]=자산증감액 [14]=자산증감율%
       // [15]=입출금 [16]=입출금반영증감 [17]=입출금반영증감율%
       const dateStr = String(row[1]||'').trim();
       const totalAsset = parseFloat(String(row[12]||'').replace(/,/g,''))||0;
-      const monthStr = thisYear+'년';
-      // 실시간 행: [12]=자산합계 [15]=입출금 [16]=입출금반영증감 [17]=입출금반영증감율
+      const deposit    = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
+      // 실시간 행
       if(dateStr==='실시간') {
         realtimeAsset = totalAsset;
-        S._monthlyDeposit = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
-        S._monthlyNetAmt  = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
-        S._monthlyNetPct  = parseFloat(String(row[17]||'').replace('%',''))||0;
       }
       // 전월 말
       const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
@@ -320,20 +317,25 @@ async function fetchHistory() {
       if(dateStr.includes(prevYear+'년')&&dateStr.includes(prevMonth+'월')&&!dateStr.includes('합계')) {
         prevMonthAsset = totalAsset;
       }
-      // 연간 합계: [16]=입출금반영증감, [17]=입출금반영증감율
-      if(dateStr.includes(monthStr)&&dateStr.includes('합계')) {
-        const yAmt = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
-        const yPct = parseFloat(String(row[17]||'').replace('%',''))||0;
-        yearly = { pct: yPct, amt: yAmt };
+      // 연초 (작년 12월 말)
+      if(dateStr.includes((thisYear-1)+'년')&&dateStr.includes('12월')&&!dateStr.includes('합계')) {
+        yearStartAsset = totalAsset;
+      }
+      // 연간 입출금 누계 합산 (thisYear 행들)
+      if(dateStr.includes(thisYear+'년')&&!dateStr.includes('합계')&&deposit!==0) {
+        yearDeposit += deposit;
       }
     });
-    // 이달 수익률 - 실시간 행의 입출금반영 값 직접 사용
-    if(S._monthlyNetAmt) {
-      monthly = { pct: S._monthlyNetPct||0, amt: S._monthlyNetAmt };
-    } else if(realtimeAsset>0&&prevMonthAsset>0) {
-      const deposit = S._monthlyDeposit||0;
-      const diff = realtimeAsset - prevMonthAsset - deposit;
+    // 이달 수익률 = (실시간 - 전월말 - 이달입금) / 전월말
+    if(realtimeAsset>0 && prevMonthAsset>0) {
+      const diff = realtimeAsset - prevMonthAsset;
+      // 이달 입금은 실시간 행 deposit에서 읽기 어려우므로 자산증감으로 근사
       monthly = { pct: diff/prevMonthAsset*100, amt: diff };
+    }
+    // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
+    if(realtimeAsset>0 && yearStartAsset>0) {
+      const netDiff = realtimeAsset - yearStartAsset - yearDeposit;
+      yearly = { pct: netDiff/yearStartAsset*100, amt: netDiff };
     }
     S.history = { monthly, yearly };
   } catch(e) { S.history = null; }
