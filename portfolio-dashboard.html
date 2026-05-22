@@ -280,7 +280,7 @@ function saveAndLoad() {
 async function fetchSheet() {
   const {key,sid,tab}=S.cfg;
   if(!key||!sid) throw new Error('API 키 또는 시트 ID가 없습니다');
-  const url=`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}!A2:J100?key=${key}`;
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}!A1:I100?key=${key}`;
   const res=await fetch(url);
   const d=await res.json();
   if(d.error) throw new Error(d.error.message);
@@ -293,26 +293,28 @@ function parseNum(v) {
 }
 
 function parseSheet(rows) {
-  // 새 구조: A=빈칸 B=번호 C=자산유형 D=투자방식 E=계좌 F=시장 G=Name H=티커 I=매수주가 J=매수주식수
-  // 인덱스:  0     1    2        3        4     5     6      7      8        9
+  // 구조: A(0)=번호 B(1)=자산유형 C(2)=그룹 D(3)=계좌 E(4)=시장 F(5)=Name G(6)=티커 H(7)=매수주가 I(8)=매수주식수
   const stocks=[];
   rows.forEach(row=>{
-    if(!row||row.length<6) return;
-    const no = String(row[1]||'').trim();
+    if(!row||row.length<5) return;
+    const no        = String(row[0]||'').trim();
     if(no==='번호'||no==='') return;
-    const assetType = String(row[2]||'').trim();
-    const method    = String(row[3]||'').trim();
-    const account   = String(row[4]||'').trim();
-    const market    = String(row[5]||'').trim().toUpperCase();
-    const name      = String(row[6]||'').trim();
-    const ticker    = String(row[7]||'').trim().toUpperCase();
-    const buyPx     = parseNum(row[8]);
-    const qty       = parseNum(row[9]);
+    const assetType = String(row[1]||'').trim(); // 자산유형
+    const group     = String(row[2]||'').trim(); // 그룹
+    const account   = String(row[3]||'').trim(); // 계좌
+    const market    = String(row[4]||'').trim().toUpperCase(); // 시장
+    const name      = String(row[5]||'').trim(); // Name
+    const ticker    = String(row[6]||'').trim().toUpperCase(); // 티커
+    const buyPx     = parseNum(row[7]); // 매수주가
+    const qty       = parseNum(row[8]); // 매수주식수
     if(!name||!assetType) return;
-    const isCash     = method==='현금';
-    const isCashLike = method==='현금성';
-    const isFixed    = method==='고정';
-    stocks.push({ assetType, method, account, market, name, ticker, buyPx, qty, isCash, isCashLike, isFixed });
+
+    // 그룹명으로 현금 분류
+    const isCash     = group.includes('현금성') || group.includes('현금');
+    const isCashLike = group.includes('현금성'); // SGOV 등 가격 계산 필요
+    const isFixed    = group==='보증금'||group==='주택청약';
+
+    stocks.push({ assetType, group, account, market, name, ticker, buyPx, qty, isCash, isCashLike, isFixed });
   });
   return stocks;
 }
@@ -484,23 +486,37 @@ function renderBriefing() {
   S.stocks.forEach(s=>{totalEval+=evalKRW(s);totalBuy+=buyKRW(s);});
   const totalPnl=totalEval-totalBuy;
   const totalPct=totalBuy>0?totalPnl/totalBuy*100:0;
-  // 현금비중: 현금(isCash) + 현금성(isCashLike) 포함, 고정(isFixed) 제외
-  const cashAmt = S.stocks.filter(s=>s.isCash).reduce((a,s)=>a+s.qty,0)
-    + S.stocks.filter(s=>s.isCashLike).reduce((a,s)=>a+evalKRW(s),0);
+  // 현금비중: 현금성 그룹 + 연금/IRP 현금 포함, 보증금/주택청약 제외
+  const cashAmt = S.stocks
+    .filter(s=>s.isCash&&!s.isFixed)
+    .reduce((a,s)=>a+(s.isCashLike?evalKRW(s):s.qty),0);
   const cashPct=totalEval>0?cashAmt/totalEval*100:0;
   const cashOk=cashPct>=S.cfg.cashMin&&cashPct<=S.cfg.cashMax;
   const fxCur=S.fx?.cur;
   const fxDiff=S.fx?.p1d?S.fx.cur-S.fx.p1d:null;
 
-  // 그룹핑: 자산유형 기준
+  // 그룹핑: 자산유형 > 그룹 순
   const catMap={};
+  // 자산유형 순서 고정
+  const ASSET_ORDER = ['유동자산','연금IRP','기타자산'];
   S.stocks.forEach(s=>{
     const key = s.assetType||'기타';
-    if(!catMap[key]) catMap[key]={stocks:[],eval:0,buy:0};
+    if(!catMap[key]) catMap[key]={stocks:[],eval:0,buy:0,groups:{}};
     catMap[key].stocks.push(s);
     catMap[key].eval+=evalKRW(s);
     catMap[key].buy+=buyKRW(s);
+    // 그룹별 소계
+    const g = s.group||'기타';
+    if(!catMap[key].groups[g]) catMap[key].groups[g]={stocks:[],eval:0,buy:0};
+    catMap[key].groups[g].stocks.push(s);
+    catMap[key].groups[g].eval+=evalKRW(s);
+    catMap[key].groups[g].buy+=buyKRW(s);
   });
+  // 자산유형 순서 정렬
+  const sortedCatMap = {};
+  ASSET_ORDER.forEach(k=>{ if(catMap[k]) sortedCatMap[k]=catMap[k]; });
+  Object.keys(catMap).forEach(k=>{ if(!sortedCatMap[k]) sortedCatMap[k]=catMap[k]; });
+  Object.assign(catMap, sortedCatMap);
 
   let html=`
   <div class="hero">
@@ -574,7 +590,7 @@ function renderBriefing() {
               const pnlS=ev-by,pctS=by>0?pnlS/by*100:0;
               const day=s.isCash?null:dayChg(s);
               return `<tr>
-                <td><div class="tn">${s.name}</div><div class="ts">${s.method==='현금'||s.method==='고정'?s.method:s.ticker} <span style="color:var(--text3);font-size:10px;">${s.account||''}</span></div></td>
+                <td><div class="tn">${s.name}</div><div class="ts">${s.ticker||s.group} <span style="color:var(--text3);font-size:10px;">${s.account||''}</span></div></td>
                 <td>${by>0?F.won(by):'—'}</td>
                 <td>${F.won(ev)}</td>
                 <td class="${C(pnlS)}">${by>0?(pnlS>=0?'+':'')+F.won(pnlS):'—'}</td>
@@ -664,7 +680,7 @@ function renderTargets() {
   const inv=S.stocks.filter(s=>!s.isCash);
   if(!inv.length){el.innerHTML='<div style="font-size:12px;color:var(--text3);padding:10px 0;">브리핑 탭을 먼저 열어주세요</div>';return;}
   const grps={};
-  inv.forEach(s=>{if(!grps[s.cat2])grps[s.cat2]=[];grps[s.cat2].push(s);});
+  inv.forEach(s=>{const g=s.group||'기타';if(!grps[g])grps[g]=[];grps[g].push(s);});
   el.innerHTML=Object.entries(grps).map(([cat,stocks])=>`
     <div style="margin-bottom:16px;">
       <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">${cat}</div>
