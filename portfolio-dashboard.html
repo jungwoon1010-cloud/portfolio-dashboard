@@ -175,27 +175,24 @@ tr:hover td{background:rgba(255,255,255,.015);}
   <div class="card" id="preview-card" style="display:none;">
     <div class="card-title">
       미리보기 <span id="preview-broker" style="color:var(--acc);font-weight:400;font-size:11px;"></span>
-      <button class="btn btn-p btn-sm" onclick="applyToSheet()">구글 시트 업데이트</button>
+      <button class="btn btn-p btn-sm" id="sync-btn" onclick="syncToSheet()">시트에 동기화</button>
     </div>
     <div id="preview-msg" style="font-size:12px;color:var(--text3);margin-bottom:10px;"></div>
+    <!-- 미매칭 카테고리 지정 (신규종목) -->
+    <div id="unmatched-section" style="display:none;margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:500;color:var(--warn);margin-bottom:8px;">⚠️ 시트에 없는 종목 — 카테고리를 확인해주세요</div>
+      <div id="unmatched-rows"></div>
+    </div>
     <table class="cmp-table" id="preview-table">
       <thead><tr>
-        <th style="text-align:left;">종목코드</th>
         <th style="text-align:left;">종목명</th>
-        <th>보유수량</th>
+        <th>수량</th>
         <th>매입가</th>
-        <th>시트 매칭</th>
+        <th>계좌</th>
+        <th>그룹</th>
       </tr></thead>
       <tbody id="preview-tbody"></tbody>
     </table>
-
-    <div id="unmatched-section" style="display:none;margin-top:18px;">
-      <div style="font-size:12px;font-weight:500;color:var(--warn);margin-bottom:10px;">
-        ⚠️ 미매칭 종목 — 카테고리 지정 후 신규 추가
-      </div>
-      <div id="unmatched-rows"></div>
-      <button class="btn btn-p btn-sm" style="margin-top:12px;" onclick="addNewStocks()">신규 종목 추가</button>
-    </div>
   </div>
 </div>
 
@@ -878,7 +875,6 @@ function handleFile(file) {
 
 function parseBalanceFile(rows, filename) {
   const status = document.getElementById('upload-status');
-  // 헤더 행 찾기
   let headerIdx = -1, broker = null;
   for (let i = 0; i < Math.min(rows.length, 5); i++) {
     const cols = rows[i].map(c => String(c).trim());
@@ -891,123 +887,133 @@ function parseBalanceFile(rows, filename) {
     status.innerHTML = `<div class="err">증권사 양식을 인식하지 못했습니다. 현재 지원: 메리츠증권(국내/해외), 삼성증권(연금/IRP)</div>`;
     return;
   }
-  // broker.parse 함수로 파싱
+
   const parsed = broker.parse(rows.slice(headerIdx));
-  parsedRows = parsed.map(r => {
-    // 시트 매칭: 티커 우선, 없으면 종목명 앞 4글자로 매칭
-    const matched = S.stocks.find(s =>
-      (r.code && s.ticker === r.code) ||
-      (r.name && s.name && (s.name.includes(r.name.slice(0,4)) || r.name.includes(s.name.slice(0,4))))
-    );
-    return { ...r, matched: matched?.name || null, matchedStock: matched || null };
+
+  // 각 종목에 카테고리 정보 부여 (파서에 없으면 UM_MAP으로 추론)
+  parsedRows = parsed.map((r, i) => {
+    const defAccount = r.account || '메리츠-국내';
+    const defGroup   = r.group   || 'Pluto-국내';
+    const defAsset   = r.assetType ||
+      ((defAccount.includes('삼성-연금') || defAccount.includes('삼성-IRP')) ? '연금IRP'
+      : defAccount.includes('해외') ? '미국' : '한국');
+    const defMkt = r.market || (defAccount.includes('해외') ? 'US' : 'KR');
+    return { ...r, _asset: defAsset, _group: defGroup, _account: defAccount, _mkt: defMkt, _idx: i };
   });
 
-  // 미리보기
-  document.getElementById('preview-broker').textContent = broker.name + ' · ' + parsedRows.length + '개 종목';
-  document.getElementById('preview-msg').textContent =
-    `구글 시트 매수종목 탭에서 종목코드 매칭 후 매입가·수량을 업데이트합니다.`;
-  const tbody = document.getElementById('preview-tbody');
-  tbody.innerHTML = parsedRows.map(r => `
-    <tr>
-      <td style="font-family:var(--mono);">${r.code}</td>
-      <td>${r.name}</td>
-      <td style="text-align:right;font-family:var(--mono);">${r.isCash ? '—' : r.qty.toLocaleString()}</td>
-      <td style="text-align:right;font-family:var(--mono);">${r.isCash ? r.qty.toLocaleString()+'원' : r.buyPx.toLocaleString()}</td>
-      <td style="text-align:center;font-size:11px;">${r.matched
-        ? `<span style="color:var(--pos);">✓ ${r.matched}</span>`
-        : `<span style="color:var(--warn);">미매칭</span>`}</td>
-    </tr>`).join('');
-  document.getElementById('preview-card').style.display = 'block';
-  status.innerHTML = '';
+  // 신규종목(시트에 없는것) 파악 — 카테고리 확인용
+  const newItems = parsedRows.filter(r => {
+    const inSheet = S.stocks.find(s =>
+      (r.code && !r.code.startsWith('CASH_') && s.ticker === r.code) ||
+      (r.name && s.name && (s.name.includes(r.name.slice(0,4)) || r.name.includes(s.name.slice(0,4))))
+    );
+    return !inSheet;
+  });
 
-  // 미매칭 종목 UI
-  const unmatched = parsedRows.filter(r => !r.matched);
+  // 미매칭 UI (신규종목 카테고리 확인)
   const unmatchedSection = document.getElementById('unmatched-section');
-  if (unmatched.length > 0) {
+  if (newItems.length > 0) {
     unmatchedSection.style.display = 'block';
-    document.getElementById('unmatched-rows').innerHTML = unmatched.map((r, i) => {
-      const defAccount = r.account || '메리츠-국내';
-      const defGroup   = r.group   || 'Pluto-국내';
-      const defAsset   = (defAccount.includes('삼성-연금') || defAccount.includes('삼성-IRP')) ? '연금IRP'
-                       : defAccount.includes('해외') ? '미국' : '한국';
-      const defMkt     = defAccount.includes('해외') ? 'US' : 'KR';
-
-      const getOpts = (asset) => {
-        const m = UM_MAP[asset] || UM_MAP['한국'];
-        const grp = m.groups.includes(defGroup) ? defGroup : m.groups[0];
-        const acc = m.accounts.includes(defAccount) ? defAccount : m.accounts[0];
-        return { groups: m.groups, accounts: m.accounts, mkt: m.mkt, grp, acc };
-      };
-
-      const initOpts = getOpts(defAsset);
-
-      return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+    document.getElementById('unmatched-rows').innerHTML = newItems.map((r) => {
+      const i = r._idx;
+      const m = UM_MAP[r._asset] || UM_MAP['한국'];
+      const grp = m.groups.includes(r._group) ? r._group : m.groups[0];
+      const acc = m.accounts.includes(r._account) ? r._account : m.accounts[0];
+      const sel = (list, def) => list.map(v=>`<option${v===def?' selected':''}>${v}</option>`).join('');
+      return `<div style="padding:8px 0;border-bottom:0.5px solid var(--border);">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span style="font-family:var(--mono);font-size:11px;color:var(--text3);width:70px;flex-shrink:0;">${r.code||'—'}</span>
-          <span style="font-size:12px;flex:1;min-width:120px;">${r.name}</span>
-          <select class="fs" id="um-asset-${i}" onchange="umRefresh(${i})"
+          <span style="font-size:12px;flex:1;min-width:140px;font-weight:500;">${r.name}</span>
+          <select id="um-asset-${i}" onchange="umRefresh(${i})"
             style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
-            ${['한국','미국','연금IRP','기타'].map(v=>`<option${v===defAsset?' selected':''}>${v}</option>`).join('')}
+            ${['한국','미국','연금IRP','기타'].map(v=>`<option${v===r._asset?' selected':''}>${v}</option>`).join('')}
           </select>
-          <select class="fs" id="um-group-${i}"
+          <select id="um-group-${i}"
             style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
-            ${initOpts.groups.map(v=>`<option${v===initOpts.grp?' selected':''}>${v}</option>`).join('')}
+            ${sel(m.groups, grp)}
           </select>
-          <select class="fs" id="um-account-${i}"
+          <select id="um-account-${i}"
             style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
-            ${initOpts.accounts.map(v=>`<option${v===initOpts.acc?' selected':''}>${v}</option>`).join('')}
+            ${sel(m.accounts, acc)}
           </select>
-          <input type="hidden" id="um-mkt-${i}" value="${initOpts.mkt}">
+          <input type="hidden" id="um-mkt-${i}" value="${r._mkt}">
         </div>
       </div>`;
     }).join('');
   } else {
     unmatchedSection.style.display = 'none';
   }
+
+  // 미리보기 테이블
+  document.getElementById('preview-broker').textContent = broker.name + ' · ' + parsedRows.length + '개 종목';
+  document.getElementById('preview-msg').textContent =
+    `"시트에 동기화" 버튼을 누르면 해당 계좌 데이터를 파일 기준으로 덮어씁니다.`;
+  document.getElementById('preview-tbody').innerHTML = parsedRows.map(r => `
+    <tr>
+      <td>${r.name}</td>
+      <td style="text-align:right;">${r.isCash ? '—' : r.qty.toLocaleString()}</td>
+      <td style="text-align:right;">${r.isCash ? F.won(r.qty)+'원' : F.won(r.buyPx)}</td>
+      <td style="font-size:11px;color:var(--text3);">${r._account||r.account||''}</td>
+      <td style="font-size:11px;color:var(--text3);">${r._group||r.group||''}</td>
+    </tr>`).join('');
+  document.getElementById('preview-card').style.display = 'block';
+  status.innerHTML = '';
 }
 
-// 자산유형 변경 시 그룹/계좌/시장 연동 업데이트
+// 자산유형 변경 시 그룹/계좌/시장 연동
 const UM_MAP = {
-  '한국':    { groups:['개별-국내','Pluto-국내','현금성-국내'], accounts:['메리츠-국내'], mkt:'KR' },
-  '미국':    { groups:['개별-미국','Pluto-미국','현금성-미국'], accounts:['메리츠-해외'], mkt:'US' },
-  '연금IRP': { groups:['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'], accounts:['삼성-연금','삼성-IRP'], mkt:'KR' },
-  '기타':    { groups:['보증금','주택청약'], accounts:['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP'], mkt:'KR' },
+  '한국':    { groups:['개별-국내','Pluto-국내','현금성-국내'],                          accounts:['메리츠-국내'],              mkt:'KR' },
+  '미국':    { groups:['개별-미국','Pluto-미국','현금성-미국'],                           accounts:['메리츠-해외'],              mkt:'US' },
+  '연금IRP': { groups:['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'],            accounts:['삼성-연금','삼성-IRP'],     mkt:'KR' },
+  '기타':    { groups:['보증금','주택청약'],                                              accounts:['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP'], mkt:'KR' },
 };
 function umRefresh(i) {
   const asset = document.getElementById(`um-asset-${i}`).value;
   const m = UM_MAP[asset] || UM_MAP['한국'];
-  const grpEl = document.getElementById(`um-group-${i}`);
-  const accEl = document.getElementById(`um-account-${i}`);
-  const mktEl = document.getElementById(`um-mkt-${i}`);
-  grpEl.innerHTML = m.groups.map(v=>`<option>${v}</option>`).join('');
-  accEl.innerHTML = m.accounts.map(v=>`<option>${v}</option>`).join('');
-  mktEl.value = m.mkt;
+  document.getElementById(`um-group-${i}`).innerHTML   = m.groups.map(v=>`<option>${v}</option>`).join('');
+  document.getElementById(`um-account-${i}`).innerHTML = m.accounts.map(v=>`<option>${v}</option>`).join('');
+  document.getElementById(`um-mkt-${i}`).value = m.mkt;
 }
 
-async function addNewStocks() {
+// 파일 기준으로 시트를 완전히 덮어씀 (계좌별 삭제 후 재추가)
+async function syncToSheet() {
   const {webhook, tab} = S.cfg;
   if (!webhook) { alert('설정에서 Apps Script 웹훅 URL을 입력해주세요'); return; }
+  if (!parsedRows.length) { alert('먼저 파일을 업로드해주세요'); return; }
 
-  const unmatched = parsedRows.filter(r => !r.matched);
-  const newRows = unmatched.map((r, i) => ({
-    assetType: document.getElementById(`um-asset-${i}`)?.value   || '한국',
-    group:     document.getElementById(`um-group-${i}`)?.value   || 'Pluto-국내',
-    account:   document.getElementById(`um-account-${i}`)?.value || '메리츠-국내',
-    market:    document.getElementById(`um-mkt-${i}`)?.value     || 'KR',
+  const btn = document.getElementById('sync-btn');
+  btn.textContent = '동기화 중...';
+  btn.disabled = true;
+
+  // parsedRows에 미매칭 종목의 카테고리 드롭다운 값 반영
+  parsedRows.forEach(r => {
+    const i = r._idx;
+    const assetEl   = document.getElementById(`um-asset-${i}`);
+    const groupEl   = document.getElementById(`um-group-${i}`);
+    const accountEl = document.getElementById(`um-account-${i}`);
+    const mktEl     = document.getElementById(`um-mkt-${i}`);
+    if (assetEl)   r._asset   = assetEl.value;
+    if (groupEl)   r._group   = groupEl.value;
+    if (accountEl) r._account = accountEl.value;
+    if (mktEl)     r._mkt     = mktEl.value;
+  });
+
+  // 동기화할 계좌 목록 (파일에 등장하는 계좌들)
+  const accounts = [...new Set(parsedRows.map(r => r._account).filter(Boolean))];
+
+  // 전송할 행 목록
+  const newRows = parsedRows.map(r => ({
+    assetType: r._asset,
+    group:     r._group,
+    account:   r._account,
+    market:    r._mkt,
     name:      r.name,
-    code:      r.code,
+    code:      r.code || '',
     buyPx:     r.buyPx,
     qty:       r.qty,
   }));
 
-  if (!newRows.length) { alert('추가할 종목이 없어요'); return; }
-
-  const btn = event.target;
-  btn.textContent = '추가 중...';
-  btn.disabled = true;
-
   try {
-    const payload = { tab, action: 'addRows', newRows };
+    const payload = { tab, action: 'syncAccounts', accounts, newRows };
     await fetch(webhook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1015,58 +1021,14 @@ async function addNewStocks() {
       mode: 'no-cors',
     });
 
-    document.getElementById('unmatched-section').innerHTML =
-      `<div style="font-size:12px;color:var(--pos);">✓ ${newRows.length}개 종목 추가 요청 완료. 시트를 확인해주세요.</div>`;
-
+    document.getElementById('upload-status').innerHTML =
+      `<div style="font-size:12px;color:var(--pos);margin-top:8px;">✓ ${newRows.length}개 종목 동기화 완료. 시트를 확인해주세요.</div>`;
+    btn.textContent = '시트에 동기화';
+    btn.disabled = false;
     setTimeout(() => { if(confirm('대시보드를 새로고침 할까요?')) loadAll(); }, 800);
   } catch(e) {
     alert('오류: ' + e.message);
-    btn.textContent = '신규 종목 추가';
-    btn.disabled = false;
-  }
-}
-
-async function applyToSheet() {
-  const {webhook, tab} = S.cfg;
-  if (!webhook) { alert('설정에서 Apps Script 웹훅 URL을 입력해주세요'); return; }
-  if (!parsedRows.length) { alert('먼저 파일을 업로드해주세요'); return; }
-
-  const matched = parsedRows.filter(r => r.matched);
-  if (!matched.length) { alert('매칭된 종목이 없어요. 종목코드를 확인해주세요.'); return; }
-
-  const btn = event.target;
-  btn.textContent = '업데이트 중...';
-  btn.disabled = true;
-
-  try {
-    const payload = {
-      tab,
-      updates: parsedRows.filter(r => r.matched).map(r => ({
-        code: r.code || '',
-        name: r.name || '',
-        buyPx: r.buyPx,
-        qty: r.qty,
-      }))
-    };
-
-    const res = await fetch(webhook, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      mode: 'no-cors', // Apps Script는 CORS 헤더 없음
-    });
-
-    // no-cors라 응답 못 읽음 → 성공으로 간주
-    document.getElementById('upload-status').innerHTML =
-      `<div style="font-size:12px;color:var(--pos);margin-top:8px;">✓ ${parsedRows.length}개 종목 업데이트 요청 완료. 시트를 확인해주세요.</div>`;
-    btn.textContent = '구글 시트 업데이트';
-    btn.disabled = false;
-
-    // 새로고침 유도
-    setTimeout(() => { if(confirm('대시보드를 새로고침 할까요?')) loadAll(); }, 1000);
-  } catch(e) {
-    alert('오류: ' + e.message);
-    btn.textContent = '구글 시트 업데이트';
+    btn.textContent = '시트에 동기화';
     btn.disabled = false;
   }
 }
