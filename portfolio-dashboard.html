@@ -983,7 +983,7 @@ function parseBalanceFile(rows, filename) {
 // 자산유형 변경 시 그룹/계좌/시장 연동
 const UM_MAP = {
   '한국':    { groups:['한국-개별','한국-Pluto','한국-현금'],  accounts:['메리츠-국내'],                                   mkt:'KR' },
-  '미국':    { groups:['미국-개별','미국-Pluto','미국-현금'],  accounts:['메리츠-해외'],                                   mkt:'US' },
+  '미국':    { groups:['미국-Pluto','미국-개별','미국-현금'],  accounts:['메리츠-해외'],                                   mkt:'US' },
   '연금IRP': { groups:['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'], accounts:['삼성-연금','삼성-IRP'],           mkt:'KR' },
   '기타':    { groups:['보증금','주택청약'],                   accounts:['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP'], mkt:'KR' },
 };
