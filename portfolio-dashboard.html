@@ -621,7 +621,7 @@ function renderBriefing() {
             const curPx=S.prices[s.ticker]?.cur;
             const showPx=!(s.isCash||s.isFixed);
             return '<tr>'+
-              '<td><div class="tn">'+s.name+'</div><div class="ts" style="font-size:10px;color:var(--text3);">'+s.ticker+' '+s.account+'</div></td>'+
+              '<td><div class="tn">'+s.name+'</div><div class="ts" style="font-size:10px;color:var(--text3);">'+(s.ticker&&!s.ticker.startsWith('CASH_')?s.ticker+' ':'')+s.account+'</div></td>'+
               '<td style="color:var(--text3);">'+(showPx&&s.buyPx?F.won(s.buyPx):'—')+'</td>'+
               '<td style="color:var(--text3);">'+(showPx&&s.qty?s.qty.toLocaleString():'—')+'</td>'+
               '<td>'+(by>0?F.won(by):'—')+'</td>'+
@@ -839,7 +839,7 @@ const BROKERS = {
         if (isMMF) {
           const cashGroup   = acType.includes('IRP') ? 'IRP-현금' : '연금저축-현금';
           const cashAsset   = '연금IRP';
-          return { code: 'CASH_'+account.replace('-','_'), name, qty: evalAmt, buyPx: 1, account, group: cashGroup, assetType: cashAsset, isCash: true, isCashLike: false };
+          return { code: 'CASH_'+account.replace('-','_'), name, qty: evalAmt, buyPx: 1, account, group: cashGroup, assetType: cashAsset, market: 'KR', isCash: true, isCashLike: false };
         }
         return { code: '', name, qty, buyPx, account, group, isCashItem: isCashBalance };
       }).filter(r => r.name && !r.isCashItem && r.qty > 0);
