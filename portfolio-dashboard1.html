@@ -367,6 +367,7 @@ async function fetchHistory() {
     });
     // 이달 수익률 = (실시간 - 전월말) / 전월말
     // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
+    console.log('[누계] realtime:', realtimeAsset, 'prevMonth:', prevMonthAsset, 'yearStart:', yearStartAsset, 'yearDeposit:', yearDeposit);
     if(realtimeAsset>0 && prevMonthAsset>0) {
       // [16] 입출금반영증감을 직접 사용
       const netAmt = S._monthlyNetAmt || (realtimeAsset - prevMonthAsset);
@@ -589,6 +590,8 @@ function renderBriefing() {
     const dayG=dW>0?dS/dW:null;
     const orderedGroups=GROUP_ORDER[cat]||Object.keys(g.groups||{});
 
+    // 2단계: 그룹별 소계
+    console.log('[DEBUG]', cat, 'groups:', Object.keys(g.groups||{}), 'ordered:', orderedGroups);
     const subGroupHtml=orderedGroups.map((grpName,sgi)=>{
       const sg=(g.groups||{})[grpName];
       if(!sg||!sg.stocks.length) return '';
@@ -780,20 +783,18 @@ const BROKERS = {
     name: '메리츠증권(해외)',
     detect: cols => cols.some(c=>c.includes('평가금액(외화)')) && cols.includes('국가'),
     parse: (rows) => {
-      // rows[0]=헤더행, rows[1]~=데이터 (parseBalanceFile에서 headerIdx 기준 slice돼서 넘어옴)
       // 2행 쌍 구조: 홀수행=티커/수량, 짝수행=종목명/매수단가
       const result = [];
-      const dataRows = rows.slice(1); // 헤더 1행만 제외
+      const dataRows = rows.slice(2); // 헤더 2행 제외
       for (let i = 0; i < dataRows.length - 1; i += 2) {
-        const r1 = dataRows[i];     // 티커/수량 행
-        const r2 = dataRows[i+1];   // 종목명/매수단가 행
-        if (!r1 || !r2) continue;
-        const ticker  = String(r1[3]||r1[0]||'').trim();
-        const name    = String(r2[3]||r2[0]||'').trim();
+        const r1 = dataRows[i];     // 티커행
+        const r2 = dataRows[i+1];   // 종목명/매수단가행
+        const rawCode = String(r1[0]||'').trim(); // NY@ALB
+        const ticker  = String(r1[3]||'').trim(); // ALB
+        const name    = String(r2[3]||'').trim(); // 알버말
         const qty     = parseFloat(String(r1[4]||'').replace(/,/g,''))||0;
-        const buyPx   = parseFloat(String(r2[5]||r2[4]||'').replace(/,/g,''))||0;
-        // 합계행 스킵: 티커가 숫자로 시작하거나 비어있으면 제외
-        if (!ticker || !qty || /^\d/.test(ticker)) continue;
+        const buyPx   = parseFloat(String(r2[5]||'').replace(/,/g,''))||0;
+        if (!ticker || !qty) continue;
         result.push({ code: ticker, name, qty, buyPx, account: '메리츠-해외' });
       }
       return result;
@@ -801,35 +802,29 @@ const BROKERS = {
   },
   samsung: {
     name: '삼성증권',
-    detect: cols => cols.includes('계좌유형') && (cols.includes('잔고수량') || cols.includes('수량')) && (cols.includes('매수단가') || cols.includes('평균매수단가')),
+    detect: cols => cols.includes('계좌유형') && cols.includes('잔고수량') && cols.includes('매수단가'),
     parse: (rows) => {
       const headers = rows[0].map(c=>String(c).trim());
       const ci = k => headers.indexOf(k);
-      // 컬럼명 변형 대응
-      const colQty  = ci('잔고수량') !== -1 ? '잔고수량' : '수량';
-      const colPx   = ci('매수단가') !== -1 ? '매수단가' : '평균매수단가';
-      const colName = ci('종목명')   !== -1 ? '종목명'   : '상품명';
       const ACCOUNT_MAP = {
         '연금저축 CMA': '삼성-연금',
         '퇴직연금(다이렉트IRP)(비대면)': '삼성-IRP',
-        '개인형IRP': '삼성-IRP',
       };
       const GROUP_MAP = {
         '연금저축 CMA': '연금저축-종목',
         '퇴직연금(다이렉트IRP)(비대면)': 'IRP-종목',
-        '개인형IRP': 'IRP-종목',
       };
       return rows.slice(1).map(row => {
-        const name    = String(row[ci(colName)]||'').trim();
-        const qty     = parseFloat(String(row[ci(colQty)]||'').replace(/,/g,''))||0;
-        const buyPx   = parseFloat(String(row[ci(colPx)]||'').replace(/,/g,''))||0;
+        const name    = String(row[ci('종목명')]||'').trim();
+        const qty     = parseFloat(String(row[ci('잔고수량')]||'').replace(/,/g,''))||0;
+        const buyPx   = parseFloat(String(row[ci('매수단가')]||'').replace(/,/g,''))||0;
         const acType  = String(row[ci('계좌유형')]||'').trim();
         const account = ACCOUNT_MAP[acType] || acType;
         const group   = GROUP_MAP[acType] || '연금저축-종목';
-        // 현금성/MMF 제외
-        const isCashItem = name.includes('MMF')||name.includes('현금잔고')||name.includes('현금성자산')||name.includes('단기채');
+        // 현금성 종목 판별
+        const isCashItem = name.includes('MMF')||name.includes('현금잔고')||name.includes('현금성자산');
         return { code: '', name, qty, buyPx, account, group, isCashItem };
-      }).filter(r => r.name && !r.isCashItem && r.qty > 0);
+      }).filter(r=>r.name&&!r.name.includes('현금잔고')&&r.qty>0);
     }
   },
 };
@@ -875,7 +870,7 @@ function parseBalanceFile(rows, filename) {
     if (broker) break;
   }
   if (!broker) {
-    status.innerHTML = `<div class="err">증권사 양식을 인식하지 못했습니다. 현재 지원: 메리츠증권(국내/해외), 삼성증권(연금/IRP)</div>`;
+    status.innerHTML = `<div class="err">증권사 양식을 인식하지 못했습니다. 현재 지원: 메리츠증권</div>`;
     return;
   }
   // broker.parse 함수로 파싱
