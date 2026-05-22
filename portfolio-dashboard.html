@@ -911,8 +911,8 @@ function parseBalanceFile(rows, filename) {
     <tr>
       <td style="font-family:var(--mono);">${r.code}</td>
       <td>${r.name}</td>
-      <td style="text-align:right;font-family:var(--mono);">${r.qty.toLocaleString()}</td>
-      <td style="text-align:right;font-family:var(--mono);">${r.buyPx.toLocaleString()}</td>
+      <td style="text-align:right;font-family:var(--mono);">${r.isCash ? '—' : r.qty.toLocaleString()}</td>
+      <td style="text-align:right;font-family:var(--mono);">${r.isCash ? r.qty.toLocaleString()+'원' : r.buyPx.toLocaleString()}</td>
       <td style="text-align:center;font-size:11px;">${r.matched
         ? `<span style="color:var(--pos);">✓ ${r.matched}</span>`
         : `<span style="color:var(--warn);">미매칭</span>`}</td>
