@@ -439,14 +439,20 @@ async function fetchAllPrices() {
 // ── 계산 ──
 const fxRate=()=>S.fx?.cur||1;
 function evalKRW(s) {
-  if(s.isCash) return s.qty;          // 현금: qty = 금액 그대로
-  if(s.isFixed) return s.qty;         // 고정: qty = 금액 그대로
+  if(s.isFixed) return s.qty;         // 고정자산: qty = 원화금액 그대로
+  if(s.isCash && !s.isCashLike) {     // 순수현금: qty = 금액, 시장에 따라 환산
+    return s.market==='US' ? s.qty*fxRate() : s.qty;
+  }
+  // 현금성(SGOV등) 및 일반종목: 가격으로 계산
   const p=S.prices[s.ticker];
-  if(!p) return s.buyPx*s.qty*(s.market==='US'?fxRate():1); // 가격 없으면 매수금액으로
+  if(!p) return s.buyPx*s.qty*(s.market==='US'?fxRate():1);
   return s.market==='US' ? p.cur*s.qty*fxRate() : p.cur*s.qty;
 }
 function buyKRW(s) {
-  if(s.isCash||s.isFixed) return s.qty;
+  if(s.isFixed) return s.qty;
+  if(s.isCash && !s.isCashLike) {     // 순수현금: qty = 금액
+    return s.market==='US' ? s.qty*fxRate() : s.qty;
+  }
   if(!s.buyPx||!s.qty) return 0;
   return s.market==='US' ? s.buyPx*s.qty*fxRate() : s.buyPx*s.qty;
 }
