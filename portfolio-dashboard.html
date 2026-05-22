@@ -583,6 +583,7 @@ function renderBriefing() {
     const orderedGroups=GROUP_ORDER[cat]||Object.keys(g.groups||{});
 
     // 2단계: 그룹별 소계
+    console.log('[DEBUG]', cat, 'groups:', Object.keys(g.groups||{}), 'ordered:', orderedGroups);
     const subGroupHtml=orderedGroups.map((grpName,sgi)=>{
       const sg=(g.groups||{})[grpName];
       if(!sg||!sg.stocks.length) return '';
