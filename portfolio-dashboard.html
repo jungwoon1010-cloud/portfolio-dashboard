@@ -307,8 +307,8 @@ function parseSheet(rows) {
     if(!name||!assetType) return;
 
     // 그룹명으로 현금 분류
-    const isCash     = group.includes('현금성') || group.includes('현금');
-    const isCashLike = group.includes('현금성'); // SGOV 등 가격 계산 필요
+    const isCash     = group.includes('현금') || group.endsWith('-현금');
+    const isCashLike = group.endsWith('-현금') && (group.startsWith('미국') || group.startsWith('한국')); // SGOV 등 가격 계산 필요
     const isFixed    = group==='보증금'||group==='주택청약';
 
     stocks.push({ assetType, group, account, market, name, ticker, buyPx, qty, isCash, isCashLike, isFixed });
@@ -568,8 +568,8 @@ function renderBriefing() {
 
   // 그룹 순서 정의
   const GROUP_ORDER = {
-    '미국':    ['미국-개별','미국-Pluto','미국-현금성'],
-    '한국':    ['한국-개별','한국-Pluto','한국-현금성'],
+    '미국':    ['미국-개별','미국-Pluto','미국-현금'],
+    '한국':    ['한국-개별','한국-Pluto','한국-현금'],
     '연금IRP': ['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'],
     '기타':    ['보증금','주택청약'],
   };
@@ -969,8 +969,8 @@ function parseBalanceFile(rows, filename) {
 
 // 자산유형 변경 시 그룹/계좌/시장 연동
 const UM_MAP = {
-  '한국':    { groups:['한국-개별','한국-Pluto','한국-현금성'],                          accounts:['메리츠-국내'],              mkt:'KR' },
-  '미국':    { groups:['미국-개별','미국-Pluto','미국-현금성'],                           accounts:['메리츠-해외'],              mkt:'US' },
+  '한국':    { groups:['한국-개별','한국-Pluto','한국-현금'],                          accounts:['메리츠-국내'],              mkt:'KR' },
+  '미국':    { groups:['미국-개별','미국-Pluto','미국-현금'],                           accounts:['메리츠-해외'],              mkt:'US' },
   '연금IRP': { groups:['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'],            accounts:['삼성-연금','삼성-IRP'],     mkt:'KR' },
   '기타':    { groups:['보증금','주택청약'],                                              accounts:['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP'], mkt:'KR' },
 };
