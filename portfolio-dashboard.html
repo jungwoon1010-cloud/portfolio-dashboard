@@ -914,11 +914,13 @@ function parseBalanceFile(rows, filename) {
   // 각 종목에 카테고리 정보 부여 (파서에 없으면 UM_MAP으로 추론)
   parsedRows = parsed.map((r, i) => {
     const defAccount = r.account || '메리츠-국내';
-    const defGroup   = r.group   || '한국-Pluto';
     const defAsset   = r.assetType ||
       ((defAccount.includes('삼성-연금') || defAccount.includes('삼성-IRP')) ? '연금IRP'
       : defAccount.includes('해외') ? '미국' : '한국');
     const defMkt = r.market || (defAccount.includes('해외') ? 'US' : 'KR');
+    // 그룹 기본값: 자산유형에 맞는 첫 번째 그룹
+    const _defaultGroups = { '한국':'한국-Pluto', '미국':'미국-Pluto', '연금IRP':'연금저축-종목', '기타':'보증금' };
+    const defGroup = r.group || _defaultGroups[defAsset] || '한국-Pluto';
     return { ...r, _asset: defAsset, _group: defGroup, _account: defAccount, _mkt: defMkt, _idx: i };
   });
 
