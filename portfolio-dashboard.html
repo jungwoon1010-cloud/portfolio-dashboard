@@ -613,13 +613,17 @@ function renderBriefing() {
           '<div class="gchev" id="'+sgid+'-ch" style="font-size:10px;">▾</div>'+
         '</div>'+
         '<div class="tbw" id="'+sgid+'-body">'+
-          '<table><thead><tr><th>종목</th><th>매수금액</th><th>평가금액</th><th>손익</th><th>수익률</th><th>전일대비</th></tr></thead><tbody>'+
+          '<table><thead><tr><th>종목</th><th>매수주가</th><th>매수수량</th><th>매수금액</th><th>평가금액</th><th>손익</th><th>수익률</th><th>전일대비</th></tr></thead><tbody>'+
           sg.stocks.map(s=>{
             const ev=evalKRW(s),by=buyKRW(s);
             const pnlS=ev-by,pctS=by>0?pnlS/by*100:0;
             const day=(s.isCash||s.isFixed)?null:dayChg(s);
+            const curPx=S.prices[s.ticker]?.cur;
+            const showPx=!(s.isCash||s.isFixed);
             return '<tr>'+
               '<td><div class="tn">'+s.name+'</div><div class="ts" style="font-size:10px;color:var(--text3);">'+s.ticker+' '+s.account+'</div></td>'+
+              '<td style="color:var(--text3);">'+(showPx&&s.buyPx?F.won(s.buyPx):'—')+'</td>'+
+              '<td style="color:var(--text3);">'+(showPx&&s.qty?s.qty.toLocaleString():'—')+'</td>'+
               '<td>'+(by>0?F.won(by):'—')+'</td>'+
               '<td>'+F.won(ev)+'</td>'+
               '<td class="'+C(pnlS)+'">'+(by>0?(pnlS>=0?'+':'')+F.won(pnlS):'—')+'</td>'+
@@ -763,71 +767,74 @@ if(S.cfg.key) loadAll();
 const BROKERS = {
   merritz: {
     name: '메리츠증권',
+    // 실제 구조: row0=헤더(col1=종목코드, col2=종목명, col4=보유수량, col6=매입가)
     detect: cols => cols.includes('종목코드') && cols.includes('매입가') && cols.includes('평가손익'),
     parse: (rows) => {
-      const headers = rows[0].map(c=>String(c).trim());
+      const headers = rows[0].map(c=>String(c||'').trim());
       const ci = k => headers.indexOf(k);
+      const iCode=ci('종목코드'), iName=ci('종목명'), iQty=ci('보유수량'), iPx=ci('매입가');
       return rows.slice(1).map(row => ({
-        code:  String(row[ci('종목코드')]||'').trim(),
-        name:  String(row[ci('종목명')]||'').trim(),
-        qty:   parseFloat(String(row[ci('보유수량')]||'').replace(/,/g,''))||0,
-        buyPx: parseFloat(String(row[ci('매입가')]||'').replace(/,/g,''))||0,
-        account: null, // 메리츠는 파일 올릴 때 계좌 선택
-      })).filter(r=>r.name&&r.qty>0);
+        code:  String(row[iCode]||'').trim(),
+        name:  String(row[iName]||'').trim(),
+        qty:   parseFloat(String(row[iQty]||'').replace(/,/g,''))||0,
+        buyPx: parseFloat(String(row[iPx] ||'').replace(/,/g,''))||0,
+        account: null,
+      })).filter(r => r.name && r.qty > 0);
     }
   },
   merritz_us: {
     name: '메리츠증권(해외)',
-    detect: cols => cols.some(c=>c.includes('평가금액(외화)')) && cols.includes('국가'),
+    // 실제 구조: row0~1=헤더 2행, row2~=데이터 (2행 쌍)
+    // 홀수행(데이터1): col3=티커, col4=수량, col5=현재가
+    // 짝수행(데이터2): col3=종목명(한글), col5=평균매입가
+    detect: cols => cols.some(c=>String(c).includes('평가금액(외화)')) && cols.includes('국가'),
     parse: (rows) => {
-      // rows[0]=헤더행, rows[1]~=데이터 (parseBalanceFile에서 headerIdx 기준 slice돼서 넘어옴)
-      // 2행 쌍 구조: 홀수행=티커/수량, 짝수행=종목명/매수단가
       const result = [];
-      const dataRows = rows.slice(1); // 헤더 1행만 제외
+      // 헤더 2행 제외 (rows는 headerIdx=0 기준으로 넘어옴)
+      const dataRows = rows.slice(2);
       for (let i = 0; i < dataRows.length - 1; i += 2) {
         const r1 = dataRows[i];     // 티커/수량 행
-        const r2 = dataRows[i+1];   // 종목명/매수단가 행
+        const r2 = dataRows[i+1];   // 종목명/매입가 행
         if (!r1 || !r2) continue;
-        const ticker  = String(r1[3]||r1[0]||'').trim();
-        const name    = String(r2[3]||r2[0]||'').trim();
-        const qty     = parseFloat(String(r1[4]||'').replace(/,/g,''))||0;
-        const buyPx   = parseFloat(String(r2[5]||r2[4]||'').replace(/,/g,''))||0;
-        // 합계행 스킵: 티커가 숫자로 시작하거나 비어있으면 제외
-        if (!ticker || !qty || /^\d/.test(ticker)) continue;
-        result.push({ code: ticker, name, qty, buyPx, account: '메리츠-해외' });
+        const ticker = String(r1[3]||'').trim();   // col3: ALB, APA 등
+        const name   = String(r2[3]||'').trim();   // col3: 알버말, APA 등
+        const qty    = parseFloat(String(r1[4]||'').replace(/,/g,''))||0;
+        const buyPx  = parseFloat(String(r2[5]||'').replace(/,/g,''))||0; // col5: 평균가
+        // 헤더 반복행·합계행 스킵
+        if (!ticker || !qty || ticker==='종목코드' || ticker==='종목명') continue;
+        result.push({ code: ticker, name: name||ticker, qty, buyPx, account: '메리츠-해외' });
       }
       return result;
     }
   },
   samsung: {
     name: '삼성증권',
-    detect: cols => cols.includes('계좌유형') && (cols.includes('잔고수량') || cols.includes('수량')) && (cols.includes('매수단가') || cols.includes('평균매수단가')),
+    // 실제 구조: row0=헤더(col1=계좌유형, col2=종목명, col4=잔고수량, col5=매수단가)
+    detect: cols => cols.includes('계좌유형') && cols.includes('잔고수량') && cols.includes('매수단가'),
     parse: (rows) => {
-      const headers = rows[0].map(c=>String(c).trim());
+      const headers = rows[0].map(c=>String(c||'').trim());
       const ci = k => headers.indexOf(k);
-      // 컬럼명 변형 대응
-      const colQty  = ci('잔고수량') !== -1 ? '잔고수량' : '수량';
-      const colPx   = ci('매수단가') !== -1 ? '매수단가' : '평균매수단가';
-      const colName = ci('종목명')   !== -1 ? '종목명'   : '상품명';
+      const iAc=ci('계좌유형'), iName=ci('종목명'), iQty=ci('잔고수량'), iPx=ci('매수단가');
       const ACCOUNT_MAP = {
-        '연금저축 CMA': '삼성-연금',
-        '퇴직연금(다이렉트IRP)(비대면)': '삼성-IRP',
-        '개인형IRP': '삼성-IRP',
+        '연금저축 CMA':                    '삼성-연금',
+        '퇴직연금(다이렉트IRP)(비대면)':   '삼성-IRP',
+        '개인형IRP':                       '삼성-IRP',
       };
       const GROUP_MAP = {
-        '연금저축 CMA': '연금저축-종목',
-        '퇴직연금(다이렉트IRP)(비대면)': 'IRP-종목',
-        '개인형IRP': 'IRP-종목',
+        '연금저축 CMA':                    '연금저축-종목',
+        '퇴직연금(다이렉트IRP)(비대면)':   'IRP-종목',
+        '개인형IRP':                       'IRP-종목',
       };
       return rows.slice(1).map(row => {
-        const name    = String(row[ci(colName)]||'').trim();
-        const qty     = parseFloat(String(row[ci(colQty)]||'').replace(/,/g,''))||0;
-        const buyPx   = parseFloat(String(row[ci(colPx)]||'').replace(/,/g,''))||0;
-        const acType  = String(row[ci('계좌유형')]||'').trim();
+        const name    = String(row[iName]||'').trim();
+        const qty     = parseFloat(String(row[iQty]||'').replace(/,/g,''))||0;
+        const buyPx   = parseFloat(String(row[iPx] ||'').replace(/,/g,''))||0;
+        const acType  = String(row[iAc]||'').trim();
         const account = ACCOUNT_MAP[acType] || acType;
-        const group   = GROUP_MAP[acType] || '연금저축-종목';
-        // 현금성/MMF 제외
-        const isCashItem = name.includes('MMF')||name.includes('현금잔고')||name.includes('현금성자산')||name.includes('단기채');
+        const group   = GROUP_MAP[acType]   || '연금저축-종목';
+        // MMF·현금잔고·현금성자산 제외
+        const isCashItem = name.includes('MMF') || name.includes('현금잔고') ||
+                           name.includes('현금성자산') || name.includes('단기채');
         return { code: '', name, qty, buyPx, account, group, isCashItem };
       }).filter(r => r.name && !r.isCashItem && r.qty > 0);
     }
