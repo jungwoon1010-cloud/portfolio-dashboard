@@ -320,66 +320,107 @@ function parseSheet(rows) {
   return stocks;
 }
 
-// ── 누계 시트 ──
+// ── 누적데이터 시트 읽기 ──
+// 컬럼: A=DATE B=환율 C=미국주식 D=미국현금 E=한국주식 F=한국현금 G=연금IRP H=주택청약 I=보증금 J=총자산 K=입출금 L=전월증감액 M=메모
 async function fetchHistory() {
   const {key,sid} = S.cfg;
   if(!key||!sid) return;
   try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent('누계')}!A1:Q40?key=${key}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent('누적데이터')}!A1:M200?key=${key}`;
     const res = await fetch(url);
     const d = await res.json();
     if(d.error) return;
-    const rows = d.values||[];
-    // 행 구조: A=DATE, B=적용환율, L=자산합계, M=자산증감, N=자산증감율, P=입출금반영증감, Q=증감율
-    // 7행(index6): 실시간
-    // 이달: 현재월 행 찾기
-    // 연간: 연도 합계 행 찾기
+    const rows = (d.values||[]).slice(1); // 헤더 제외
+    if(!rows.length) return;
+
     const now = new Date();
     const thisYear = now.getFullYear();
     const thisMonth = now.getMonth()+1;
-    let monthly = null, yearly = null;
-    let realtimeAsset = 0, prevMonthAsset = 0, yearStartAsset = 0, yearDeposit = 0;
+    const pad = n => String(n).padStart(2,'0');
+    const thisKey  = `${thisYear}-${pad(thisMonth)}`;
+    const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
+    const prevYear  = thisMonth===1 ? thisYear-1 : thisYear;
+    const prevKey  = `${prevYear}-${pad(prevMonth)}`;
+    const yearStartKey = `${thisYear-1}-12`;
+
+    let prevMonthAsset=0, yearStartAsset=0, yearDeposit=0;
     rows.forEach(row => {
-      // 실제 인덱스 (A열 빈칸 기준):
-      // [1]=DATE [11]=자산합계 [12]=자산증감 [13]=자산증감액 [14]=자산증감율%
-      // [15]=입출금 [16]=입출금반영증감 [17]=입출금반영증감율%
-      const dateStr = String(row[1]||'').trim();
-      const totalAsset = parseFloat(String(row[12]||'').replace(/,/g,''))||0;
-      const deposit    = parseFloat(String(row[15]||'').replace(/,/g,''))||0;
-      // 실시간 행: [12]=자산합계 [15]=입출금 [16]=입출금반영증감
-      if(dateStr==='실시간') {
-        realtimeAsset = totalAsset;
-        S._monthlyNetAmt = parseFloat(String(row[16]||'').replace(/,/g,''))||0;
-      }
-      // 전월 말
-      const prevMonth = thisMonth===1 ? 12 : thisMonth-1;
-      const prevYear  = thisMonth===1 ? thisYear-1 : thisYear;
-      if(dateStr.includes(prevYear+'년')&&dateStr.includes(prevMonth+'월')&&!dateStr.includes('합계')) {
-        prevMonthAsset = totalAsset;
-      }
-      // 연초 (작년 12월 말)
-      if(dateStr.includes((thisYear-1)+'년')&&dateStr.includes('12월')&&!dateStr.includes('합계')) {
-        yearStartAsset = totalAsset;
-      }
-      // 연간 입출금 누계 합산 (thisYear 행들)
-      if(dateStr.includes(thisYear+'년')&&!dateStr.includes('합계')&&deposit!==0) {
-        yearDeposit += deposit;
-      }
+      const dateKey   = String(row[0]||'').trim();
+      const totalAsset= parseFloat(String(row[9]||'').replace(/,/g,''))||0;  // J열
+      const inout     = parseFloat(String(row[10]||'').replace(/,/g,''))||0; // K열
+      if(dateKey === prevKey)      prevMonthAsset = totalAsset;
+      if(dateKey === yearStartKey) yearStartAsset = totalAsset;
+      if(dateKey.startsWith(String(thisYear)) && inout!==0) yearDeposit += inout;
     });
-    // 이달 수익률 = (실시간 - 전월말) / 전월말
-    // 연간 수익률 = (실시간 - 연초 - 연간입금) / 연초
+
+    // 실시간 자산 (현재 계산값)
+    let realtimeAsset = 0;
+    S.stocks.forEach(s=>{ realtimeAsset += evalKRW(s); });
+
+    let monthly=null, yearly=null;
     if(realtimeAsset>0 && prevMonthAsset>0) {
-      // [16] 입출금반영증감을 직접 사용
-      const netAmt = S._monthlyNetAmt || (realtimeAsset - prevMonthAsset);
-      const pct = netAmt / prevMonthAsset * 100;
-      monthly = { pct, amt: netAmt };
+      const netAmt = realtimeAsset - prevMonthAsset;
+      monthly = { pct: netAmt/prevMonthAsset*100, amt: netAmt };
     }
     if(realtimeAsset>0 && yearStartAsset>0) {
       const netDiff = realtimeAsset - yearStartAsset - yearDeposit;
       yearly = { pct: netDiff/yearStartAsset*100, amt: netDiff };
     }
     S.history = { monthly, yearly };
+    S._historyRows = rows; // 저장해두기 (saveSnapshot에서 사용)
   } catch(e) { S.history = null; }
+}
+
+// ── 스냅샷 저장 ──
+async function saveSnapshot(inout=0, memo='') {
+  const {webhook, tab} = S.cfg;
+  if(!webhook) return;
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}`;
+
+  // 그룹별 자산 계산
+  let usStock=0, usCash=0, krStock=0, krCash=0, pension=0, savings=0, deposit=0;
+  S.stocks.forEach(s => {
+    const ev = evalKRW(s);
+    const g = s.group || '';
+    const at = s.assetType || '';
+    if(at==='미국' && !s.isCash)         usStock += ev;
+    else if(at==='미국' && s.isCash)     usCash  += ev;
+    else if(at==='한국' && !s.isCash && !s.isFixed) krStock += ev;
+    else if(at==='한국' && s.isCash)     krCash  += ev;
+    else if(at==='연금IRP')              pension += ev;
+    else if(g.includes('주택청약'))      savings += ev;
+    else if(g.includes('보증금'))        deposit += ev;
+  });
+
+  let totalAsset = 0;
+  S.stocks.forEach(s=>{ totalAsset += evalKRW(s); });
+
+  const snapshot = {
+    date: dateKey,
+    fx: Math.round(S.fx?.cur||0),
+    usStock: Math.round(usStock),
+    usCash:  Math.round(usCash),
+    krStock: Math.round(krStock),
+    krCash:  Math.round(krCash),
+    pension: Math.round(pension),
+    savings: Math.round(savings),
+    deposit: Math.round(deposit),
+    totalAsset: Math.round(totalAsset),
+    inout,
+    memo,
+  };
+
+  try {
+    await fetch(webhook, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tab, action:'saveSnapshot', snapshot }),
+      mode: 'no-cors',
+    });
+  } catch(e) { console.error('saveSnapshot 실패:', e); }
 }
 
 // ── Yahoo Finance ──
@@ -548,6 +589,7 @@ function renderBriefing() {
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="hero-date">${new Date().toLocaleDateString('ko-KR')} 기준</span>
         <button class="btn btn-g btn-sm" onclick="loadAll()">↻ 새로고침</button>
+        <button class="btn btn-p btn-sm" onclick="showSnapshotModal()" style="font-size:11px;">💾 기록저장</button>
       </div>
     </div>
   </div>
@@ -982,6 +1024,46 @@ function parseBalanceFile(rows, filename) {
   status.innerHTML = '';
 }
 
+// ── 스냅샷 모달 ──
+function showSnapshotModal() {
+  if(!S.loaded) { alert('먼저 새로고침해주세요'); return; }
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const dateKey = `${now.getFullYear()}-${pad(now.getMonth()+1)}`;
+
+  // 미리보기 계산
+  let totalAsset=0; S.stocks.forEach(s=>{ totalAsset+=evalKRW(s); });
+
+  // 전월 데이터 찾기
+  const prevMonth = now.getMonth()===0 ? 12 : now.getMonth();
+  const prevYear  = now.getMonth()===0 ? now.getFullYear()-1 : now.getFullYear();
+  const prevKey   = `${prevYear}-${pad(prevMonth)}`;
+  const prevRow   = (S._historyRows||[]).find(r=>String(r[0]).trim()===prevKey);
+  const prevTotal = prevRow ? (parseFloat(String(prevRow[9]||'').replace(/,/g,''))||0) : 0;
+
+  document.getElementById('snap-preview').innerHTML =
+    `<b>${dateKey}</b> 기록 예정<br>총자산: <b>${Math.round(totalAsset).toLocaleString()}원</b>` +
+    (prevTotal>0 ? `<br>전월대비: <b>${(Math.round(totalAsset)-prevTotal>=0?'+':'')+(Math.round(totalAsset)-prevTotal).toLocaleString()}원</b>` : '');
+
+  document.getElementById('snap-inout').value = '';
+  document.getElementById('snap-memo').value = '';
+  const modal = document.getElementById('snapshot-modal');
+  modal.style.display = 'flex';
+}
+
+async function confirmSnapshot() {
+  const inout = parseFloat(document.getElementById('snap-inout').value)||0;
+  const memo  = document.getElementById('snap-memo').value||'';
+  const modal = document.getElementById('snapshot-modal');
+  modal.style.display = 'none';
+
+  await saveSnapshot(inout, memo);
+  // 저장 후 히스토리 새로고침
+  await fetchHistory();
+  renderBriefing();
+  alert('✓ 기록 저장 완료!');
+}
+
 // 자산유형 변경 시 그룹/계좌/시장 연동
 const UM_MAP = {
   '한국':    { groups:['한국-개별','한국-Pluto','한국-현금'],  accounts:['메리츠-국내'],                                   mkt:'KR' },
@@ -1056,5 +1138,20 @@ async function syncToSheet() {
   }
 }
 </script>
+<!-- 스냅샷 저장 모달 -->
+<div id="snapshot-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:24px;width:320px;">
+    <div style="font-size:14px;font-weight:600;margin-bottom:16px;">💾 이번 달 자산 기록</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:6px;">당월 입출금 (입금+, 출금-)</div>
+    <input id="snap-inout" type="number" placeholder="0" style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:12px;">
+    <div style="font-size:12px;color:var(--text3);margin-bottom:6px;">메모 (선택)</div>
+    <input id="snap-memo" type="text" placeholder="예: 급여 입금, 삼성증권 추가 등" style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:16px;">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px;" id="snap-preview"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-p" style="flex:1;" onclick="confirmSnapshot()">저장</button>
+      <button class="btn btn-g" style="flex:1;" onclick="document.getElementById('snapshot-modal').style.display='none'">취소</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
