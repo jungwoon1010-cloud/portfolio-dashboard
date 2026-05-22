@@ -389,6 +389,15 @@ const PROXIES = [
 ];
 
 async function fetchPrice(ticker) {
+  // KR 종목: .KS 실패시 .KQ 자동 재시도
+  if (ticker.endsWith('.KS')) {
+    const result = await _fetchPriceOnce(ticker);
+    if (result) return result;
+    return await _fetchPriceOnce(ticker.replace('.KS', '.KQ'));
+  }
+  return await _fetchPriceOnce(ticker);
+}
+async function _fetchPriceOnce(ticker) {
   for (const proxy of PROXIES) {
     try {
       const res = await fetch(proxy(ticker), {signal: AbortSignal.timeout(8000)});
