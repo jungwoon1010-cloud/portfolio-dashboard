@@ -515,11 +515,11 @@ function renderBriefing() {
     catMap[key].groups[g].eval+=evalKRW(s);
     catMap[key].groups[g].buy+=buyKRW(s);
   });
-  // 자산유형 순서 정렬
-  const sortedCatMap = {};
-  ASSET_ORDER.forEach(k=>{ if(catMap[k]) sortedCatMap[k]=catMap[k]; });
-  Object.keys(catMap).forEach(k=>{ if(!sortedCatMap[k]) sortedCatMap[k]=catMap[k]; });
-  Object.assign(catMap, sortedCatMap);
+  // 자산유형 순서 정렬 (ASSET_ORDER 기준)
+  const sortedEntries = [
+    ...ASSET_ORDER.filter(k=>catMap[k]).map(k=>[k,catMap[k]]),
+    ...Object.entries(catMap).filter(([k])=>!ASSET_ORDER.includes(k))
+  ];
 
   let html=`
   <div class="hero">
@@ -570,7 +570,7 @@ function renderBriefing() {
     '기타':    ['보증금','주택청약'],
   };
 
-  Object.entries(catMap).forEach(([cat,g],gi)=>{
+  sortedEntries.forEach(([cat,g],gi)=>{
     const gid='g'+gi;
     const pnl=g.eval-g.buy;
     const pct=g.buy>0?pnl/g.buy*100:0;
