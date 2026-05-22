@@ -188,6 +188,14 @@ tr:hover td{background:rgba(255,255,255,.015);}
       </tr></thead>
       <tbody id="preview-tbody"></tbody>
     </table>
+
+    <div id="unmatched-section" style="display:none;margin-top:18px;">
+      <div style="font-size:12px;font-weight:500;color:var(--warn);margin-bottom:10px;">
+        ⚠️ 미매칭 종목 — 카테고리 지정 후 신규 추가
+      </div>
+      <div id="unmatched-rows"></div>
+      <button class="btn btn-p btn-sm" style="margin-top:12px;" onclick="addNewStocks()">신규 종목 추가</button>
+    </div>
   </div>
 </div>
 
@@ -791,6 +799,73 @@ function parseBalanceFile(rows, filename) {
     </tr>`).join('');
   document.getElementById('preview-card').style.display = 'block';
   status.innerHTML = '';
+
+  // 미매칭 종목 UI
+  const unmatched = parsedRows.filter(r => !r.matched);
+  const unmatchedSection = document.getElementById('unmatched-section');
+  if (unmatched.length > 0) {
+    unmatchedSection.style.display = 'block';
+    document.getElementById('unmatched-rows').innerHTML = unmatched.map((r, i) => `
+      <div style="display:grid;grid-template-columns:90px 1fr 120px 100px 100px;gap:8px;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--border);">
+        <span style="font-family:var(--mono);font-size:12px;color:var(--text2);">${r.code}</span>
+        <span style="font-size:12px;">${r.name}</span>
+        <select class="fs" id="um-cat1-${i}" style="font-size:11px;padding:4px 6px;">
+          <option>유동자산(USD)</option>
+          <option selected>유동자산(KRW)</option>
+        </select>
+        <select class="fs" id="um-cat2-${i}" style="font-size:11px;padding:4px 6px;">
+          <option>개별</option>
+          <option selected>PLUTO(미국)</option>
+        </select>
+        <select class="fs" id="um-mkt-${i}" style="font-size:11px;padding:4px 6px;">
+          <option value="KR" selected>KR</option>
+          <option value="US">US</option>
+        </select>
+      </div>`).join('');
+  } else {
+    unmatchedSection.style.display = 'none';
+  }
+}
+
+async function addNewStocks() {
+  const {webhook, tab} = S.cfg;
+  if (!webhook) { alert('설정에서 Apps Script 웹훅 URL을 입력해주세요'); return; }
+
+  const unmatched = parsedRows.filter(r => !r.matched);
+  const newRows = unmatched.map((r, i) => ({
+    cat1:   document.getElementById(`um-cat1-${i}`)?.value || '유동자산(KRW)',
+    cat2:   document.getElementById(`um-cat2-${i}`)?.value || 'PLUTO(미국)',
+    market: document.getElementById(`um-mkt-${i}`)?.value  || 'KR',
+    name:   r.name,
+    code:   r.code,
+    buyPx:  r.buyPx,
+    qty:    r.qty,
+  }));
+
+  if (!newRows.length) { alert('추가할 종목이 없어요'); return; }
+
+  const btn = event.target;
+  btn.textContent = '추가 중...';
+  btn.disabled = true;
+
+  try {
+    const payload = { tab, action: 'addRows', newRows };
+    await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      mode: 'no-cors',
+    });
+
+    document.getElementById('unmatched-section').innerHTML =
+      `<div style="font-size:12px;color:var(--pos);">✓ ${newRows.length}개 종목 추가 요청 완료. 시트를 확인해주세요.</div>`;
+
+    setTimeout(() => { if(confirm('대시보드를 새로고침 할까요?')) loadAll(); }, 800);
+  } catch(e) {
+    alert('오류: ' + e.message);
+    btn.textContent = '신규 종목 추가';
+    btn.disabled = false;
+  }
 }
 
 async function applyToSheet() {
