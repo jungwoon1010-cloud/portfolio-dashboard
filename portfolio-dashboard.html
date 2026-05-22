@@ -486,10 +486,13 @@ function renderBriefing() {
   S.stocks.forEach(s=>{totalEval+=evalKRW(s);totalBuy+=buyKRW(s);});
   const totalPnl=totalEval-totalBuy;
   const totalPct=totalBuy>0?totalPnl/totalBuy*100:0;
-  // 현금비중: 현금성 그룹 + 연금/IRP 현금 포함, 보증금/주택청약 제외
+  // 현금비중: 현금성 그룹(SGOV 등) + 현금 그룹(현금USD/KRW, MMF) 포함, 보증금/주택청약 제외
   const cashAmt = S.stocks
-    .filter(s=>s.isCash&&!s.isFixed)
-    .reduce((a,s)=>a+(s.isCashLike?evalKRW(s):s.qty),0);
+    .filter(s=>s.isCash && !s.isFixed)
+    .reduce((a,s)=>{
+      if(s.isCashLike) return a + evalKRW(s); // SGOV: 가격으로 계산
+      return a + s.qty; // 현금/MMF: qty가 금액
+    }, 0);
   const cashPct=totalEval>0?cashAmt/totalEval*100:0;
   const cashOk=cashPct>=S.cfg.cashMin&&cashPct<=S.cfg.cashMax;
   const fxCur=S.fx?.cur;
@@ -498,7 +501,7 @@ function renderBriefing() {
   // 그룹핑: 자산유형 > 그룹 순
   const catMap={};
   // 자산유형 순서 고정
-  const ASSET_ORDER = ['유동자산','연금IRP','기타자산'];
+  const ASSET_ORDER = ['미국','한국','연금IRP','기타'];
   S.stocks.forEach(s=>{
     const key = s.assetType||'기타';
     if(!catMap[key]) catMap[key]={stocks:[],eval:0,buy:0,groups:{}};
