@@ -301,13 +301,17 @@ function parseSheet(rows) {
     const account   = String(row[3]||'').trim(); // 계좌
     const market    = String(row[4]||'').trim().toUpperCase(); // 시장
     const name      = String(row[5]||'').trim(); // Name
-    const ticker    = String(row[6]||'').trim().toUpperCase(); // 티커
+    const rawTicker  = String(row[6]||'').trim().toUpperCase(); // 티커
+    // KR 종목코드는 6자리 숫자 — 엑셀이 앞의 0을 제거하므로 복원
+    const ticker = (market==='KR' && /^\d+$/.test(rawTicker) && rawTicker.length < 6)
+      ? rawTicker.padStart(6, '0')
+      : rawTicker;
     const buyPx     = parseFloat(String(row[7]||'').replace(/,/g,''))||0; // 매수주가 (소수점 보존)
     const qty       = parseFloat(String(row[8]||'').replace(/,/g,''))||0; // 매수주식수
     if(!name||!assetType) return;
 
     // 그룹명으로 현금 분류
-    const isCash     = group.includes('현금') || group.endsWith('-현금');
+    const isCash     = group.includes('현금') || group.endsWith('-현금') || ticker.startsWith('DEPOSIT') || ticker.startsWith('SAVINGS') || ticker.startsWith('CASH_');
     const isCashLike = group.endsWith('-현금') && (group.startsWith('미국') || group.startsWith('한국')); // SGOV 등 가격 계산 필요
     const isFixed    = group==='보증금'||group==='주택청약';
 
