@@ -822,23 +822,31 @@ const BROKERS = {
         '퇴직연금(다이렉트IRP)(비대면)':   'IRP-종목',
         '개인형IRP':                       'IRP-종목',
       };
+      // 삼성증권 ETF 종목명 → 종목코드 매핑 (Yahoo Finance용 .KS 코드)
+      const ETF_CODE_MAP = {
+        'TIGER 모멘텀':                      '147970',
+        'TIGER 미국배당다우존스':             '458730',
+        'TIME 미국나스닥100액티브':           '426030',
+        'TIME 미국S&P500액티브':             '426020',
+        'TIME 미국나스닥100채권혼합50액티브': '0019K0',
+      };
       return rows.slice(1).map(row => {
         const name    = String(row[iName]||'').trim();
         const qty     = parseFloat(String(row[iQty]||'').replace(/,/g,''))||0;
         const buyPx   = parseFloat(String(row[iPx] ||'').replace(/,/g,''))||0;
-        const evalAmt = parseFloat(String(row[7]   ||'').replace(/,/g,''))||0; // 평가금액
+        const evalAmt = parseFloat(String(row[7]   ||'').replace(/,/g,''))||0;
         const acType  = String(row[iAc]||'').trim();
         const account = ACCOUNT_MAP[acType] || acType;
         const group   = GROUP_MAP[acType]   || '연금저축-종목';
-        // MMF·현금성자산: 현금성 그룹으로 포함 (평가금액을 qty로)
-        const isMMF  = name.includes('MMF') || name.includes('현금성자산');
+        const isMMF         = name.includes('MMF') || name.includes('현금성자산');
         const isCashBalance = name.includes('현금잔고') || name.includes('예수금');
         if (isMMF) {
-          const cashGroup   = acType.includes('IRP') ? 'IRP-현금' : '연금저축-현금';
-          const cashAsset   = '연금IRP';
-          return { code: 'CASH_'+account.replace('-','_'), name, qty: evalAmt, buyPx: 1, account, group: cashGroup, assetType: cashAsset, market: 'KR', isCash: true, isCashLike: false };
+          const cashGroup = acType.includes('IRP') ? 'IRP-현금' : '연금저축-현금';
+          return { code: 'CASH_'+account.replace('-','_'), name, qty: evalAmt, buyPx: 1, account, group: cashGroup, assetType: '연금IRP', market: 'KR', isCash: true, isCashLike: false };
         }
-        return { code: '', name, qty, buyPx, account, group, isCashItem: isCashBalance };
+        // ETF 종목코드 자동 매핑
+        const code = ETF_CODE_MAP[name] || '';
+        return { code, name, qty, buyPx, account, group, isCashItem: isCashBalance };
       }).filter(r => r.name && !r.isCashItem && r.qty > 0);
     }
   },
