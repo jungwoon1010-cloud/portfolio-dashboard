@@ -596,7 +596,7 @@ function renderBriefing() {
       });
       const sdayG=sdW>0?sdS/sdW:null;
       return '<div class="grp" id="'+sgid+'" style="border-radius:0;border:none;border-bottom:0.5px solid var(--border);margin:0;">'+
-        '<div class="ghd" style="background:var(--bg3);" onclick="toggle(''+sgid+'')">'+
+        '<div class="ghd" style="background:var(--bg3);" onclick="toggle(\'' +sgid+ '\')">'+
           '<div class="gtw" style="min-width:140px;padding-left:28px;"><div class="gt" style="font-size:11px;color:var(--text2);">'+grpName+'</div></div>'+
           '<div class="gst">'+
             '<div class="gc"><div class="gcl">평가금액</div><div class="gcv" style="font-size:12px;">'+F.won(sg.eval)+'원</div></div>'+
