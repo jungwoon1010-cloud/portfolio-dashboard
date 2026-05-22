@@ -758,10 +758,66 @@ const BROKERS = {
   merritz: {
     name: '메리츠증권',
     detect: cols => cols.includes('종목코드') && cols.includes('매입가') && cols.includes('평가손익'),
-    headerRow: 0,
-    cols: { code: '종목코드', name: '종목명', qty: '보유수량', buyPx: '매입가' },
+    parse: (rows) => {
+      const headers = rows[0].map(c=>String(c).trim());
+      const ci = k => headers.indexOf(k);
+      return rows.slice(1).map(row => ({
+        code:  String(row[ci('종목코드')]||'').trim(),
+        name:  String(row[ci('종목명')]||'').trim(),
+        qty:   parseFloat(String(row[ci('보유수량')]||'').replace(/,/g,''))||0,
+        buyPx: parseFloat(String(row[ci('매입가')]||'').replace(/,/g,''))||0,
+        account: null, // 메리츠는 파일 올릴 때 계좌 선택
+      })).filter(r=>r.name&&r.qty>0);
+    }
   },
-  // 추후 다른 증권사 추가
+  merritz_us: {
+    name: '메리츠증권(해외)',
+    detect: cols => cols.some(c=>c.includes('평가금액(외화)')) && cols.includes('국가'),
+    parse: (rows) => {
+      // 2행 쌍 구조: 홀수행=티커/수량, 짝수행=종목명/매수단가
+      const result = [];
+      const dataRows = rows.slice(2); // 헤더 2행 제외
+      for (let i = 0; i < dataRows.length - 1; i += 2) {
+        const r1 = dataRows[i];     // 티커행
+        const r2 = dataRows[i+1];   // 종목명/매수단가행
+        const rawCode = String(r1[0]||'').trim(); // NY@ALB
+        const ticker  = String(r1[3]||'').trim(); // ALB
+        const name    = String(r2[3]||'').trim(); // 알버말
+        const qty     = parseFloat(String(r1[4]||'').replace(/,/g,''))||0;
+        const buyPx   = parseFloat(String(r2[5]||'').replace(/,/g,''))||0;
+        if (!ticker || !qty) continue;
+        result.push({ code: ticker, name, qty, buyPx, account: '메리츠-해외' });
+      }
+      return result;
+    }
+  },
+  samsung: {
+    name: '삼성증권',
+    detect: cols => cols.includes('계좌유형') && cols.includes('잔고수량') && cols.includes('매수단가'),
+    parse: (rows) => {
+      const headers = rows[0].map(c=>String(c).trim());
+      const ci = k => headers.indexOf(k);
+      const ACCOUNT_MAP = {
+        '연금저축 CMA': '삼성-연금',
+        '퇴직연금(다이렉트IRP)(비대면)': '삼성-IRP',
+      };
+      const GROUP_MAP = {
+        '연금저축 CMA': '연금저축-종목',
+        '퇴직연금(다이렉트IRP)(비대면)': 'IRP-종목',
+      };
+      return rows.slice(1).map(row => {
+        const name    = String(row[ci('종목명')]||'').trim();
+        const qty     = parseFloat(String(row[ci('잔고수량')]||'').replace(/,/g,''))||0;
+        const buyPx   = parseFloat(String(row[ci('매수단가')]||'').replace(/,/g,''))||0;
+        const acType  = String(row[ci('계좌유형')]||'').trim();
+        const account = ACCOUNT_MAP[acType] || acType;
+        const group   = GROUP_MAP[acType] || '연금저축-종목';
+        // 현금성 종목 판별
+        const isCashItem = name.includes('MMF')||name.includes('현금잔고')||name.includes('현금성자산');
+        return { code: '', name, qty, buyPx, account, group, isCashItem };
+      }).filter(r=>r.name&&!r.name.includes('현금잔고')&&r.qty>0);
+    }
+  },
 };
 
 let parsedRows = [];
@@ -808,24 +864,16 @@ function parseBalanceFile(rows, filename) {
     status.innerHTML = `<div class="err">증권사 양식을 인식하지 못했습니다. 현재 지원: 메리츠증권</div>`;
     return;
   }
-  const headers = rows[headerIdx].map(c => String(c).trim());
-  const codeIdx = headers.indexOf(broker.cols.code);
-  const nameIdx = headers.indexOf(broker.cols.name);
-  const qtyIdx  = headers.indexOf(broker.cols.qty);
-  const pxIdx   = headers.indexOf(broker.cols.buyPx);
-
-  parsedRows = [];
-  for (let i = headerIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    const code = String(row[codeIdx]||'').trim();
-    const name = String(row[nameIdx]||'').trim();
-    const qty  = parseFloat(String(row[qtyIdx]||'').replace(/,/g,''))||0;
-    const px   = parseFloat(String(row[pxIdx]||'').replace(/,/g,''))||0;
-    if (!code || !name || qty === 0) continue;
-    // 시트 매칭
-    const matched = S.stocks.find(s => s.ticker === code || s.name.includes(name.slice(0,3)));
-    parsedRows.push({ code, name, qty, buyPx: px, matched: matched?.name || null });
-  }
+  // broker.parse 함수로 파싱
+  const parsed = broker.parse(rows.slice(headerIdx));
+  parsedRows = parsed.map(r => {
+    // 시트 매칭: 티커 우선, 없으면 종목명 앞 4글자로 매칭
+    const matched = S.stocks.find(s =>
+      (r.code && s.ticker === r.code) ||
+      (r.name && s.name && (s.name.includes(r.name.slice(0,4)) || r.name.includes(s.name.slice(0,4))))
+    );
+    return { ...r, matched: matched?.name || null, matchedStock: matched || null };
+  });
 
   // 미리보기
   document.getElementById('preview-broker').textContent = broker.name + ' · ' + parsedRows.length + '개 종목';
