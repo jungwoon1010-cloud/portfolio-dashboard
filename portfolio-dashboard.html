@@ -305,8 +305,8 @@ function parseSheet(rows) {
     const market    = String(row[4]||'').trim().toUpperCase(); // 시장
     const name      = String(row[5]||'').trim(); // Name
     const ticker    = String(row[6]||'').trim().toUpperCase(); // 티커
-    const buyPx     = parseNum(row[7]); // 매수주가
-    const qty       = parseNum(row[8]); // 매수주식수
+    const buyPx     = parseFloat(String(row[7]||'').replace(/,/g,''))||0; // 매수주가 (소수점 보존)
+    const qty       = parseFloat(String(row[8]||'').replace(/,/g,''))||0; // 매수주식수
     if(!name||!assetType) return;
 
     // 그룹명으로 현금 분류
@@ -425,9 +425,11 @@ function calcRSI(closes,period) {
 
 async function fetchAllPrices() {
   S.fx=await fetchPrice('USDKRW=X');
-  // 현금/고정 제외, 현금성(SGOV 등)은 포함하여 가격 수집
+  // 현금성(isCashLike=SGOV등) 포함, 순수현금/고정 제외
   const tickers=[...new Set(S.stocks
-    .filter(s=>!s.isCash&&!s.isFixed&&s.ticker&&!s.ticker.startsWith('CASH_')&&!s.ticker.startsWith('MMF')&&!s.ticker.startsWith('DEPOSIT')&&!s.ticker.startsWith('SAVINGS'))
+    .filter(s=>!s.isFixed && !(s.isCash && !s.isCashLike) &&
+      s.ticker && !s.ticker.startsWith('CASH_') && !s.ticker.startsWith('MMF') &&
+      !s.ticker.startsWith('DEPOSIT') && !s.ticker.startsWith('SAVINGS'))
     .map(s=>s.market==='KR'?s.ticker+'.KS':s.ticker))];
   await Promise.all(tickers.map(async t=>{
     const base=t.replace('.KS','');
