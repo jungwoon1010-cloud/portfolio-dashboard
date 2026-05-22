@@ -933,7 +933,7 @@ function parseBalanceFile(rows, filename) {
                        : defAccount.includes('해외') ? '미국' : '한국';
       const defMkt     = defAccount.includes('해외') ? 'US' : 'KR';
       const assetList  = ['한국','미국','연금IRP','기타'];
-      const groupList  = ['개별-국내','Pluto-국내','현금성-국내','개별-미국','Pluto-미국','현금성-미국','연금저축-종목','IRP-종목','보증금','주택청약'];
+      const groupList  = ['개별-국내','Pluto-국내','현금성-국내','개별-미국','Pluto-미국','현금성-미국','연금저축-종목','연금저축-현금','IRP-종목','IRP-현금','보증금','주택청약'];
       const acctList   = ['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP','직접입력'];
       const sel = (list, def) => list.map(v=>`<option${v===def?' selected':''}>${v}</option>`).join('');
       return `<div style="display:grid;grid-template-columns:80px 1fr 90px 140px 110px 70px;gap:6px;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--border);">
@@ -1010,8 +1010,9 @@ async function applyToSheet() {
   try {
     const payload = {
       tab,
-      updates: parsedRows.map(r => ({
-        code: r.code,
+      updates: parsedRows.filter(r => r.matched).map(r => ({
+        code: r.code || '',
+        name: r.name || '',
         buyPx: r.buyPx,
         qty: r.qty,
       }))
