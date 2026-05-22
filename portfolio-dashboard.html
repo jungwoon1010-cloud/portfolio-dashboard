@@ -280,7 +280,7 @@ function saveAndLoad() {
 async function fetchSheet() {
   const {key,sid,tab}=S.cfg;
   if(!key||!sid) throw new Error('API 키 또는 시트 ID가 없습니다');
-  const url=`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}!A2:I100?key=${key}`;
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(tab)}!A2:J100?key=${key}`;
   const res=await fetch(url);
   const d=await res.json();
   if(d.error) throw new Error(d.error.message);
@@ -293,40 +293,26 @@ function parseNum(v) {
 }
 
 function parseSheet(rows) {
-  // 실제 시트 구조 (콘솔 확인):
-  // 행[0]전체가 빈칸(A열) → 실제 데이터:
-  // [0]빈칸 [1]번호 [2]카테고리1 [3]카테고리2 [4]시장 [5]Name [6]티커 [7]매수주가 [8]매수주식수
+  // 새 구조: A=빈칸 B=번호 C=자산유형 D=투자방식 E=계좌 F=시장 G=Name H=티커 I=매수주가 J=매수주식수
+  // 인덱스:  0     1    2        3        4     5     6      7      8        9
   const stocks=[];
-  let lastCat1='', lastCat2='';
   rows.forEach(row=>{
     if(!row||row.length<6) return;
-    const no   = String(row[1]||'').trim();
-    // 헤더행 스킵
+    const no = String(row[1]||'').trim();
     if(no==='번호'||no==='') return;
-    const cat1  = String(row[2]||'').trim() || lastCat1;
-    const cat2  = String(row[3]||'').trim() || lastCat2;
-    const market= String(row[4]||'').trim().toUpperCase();
-    const name  = String(row[5]||'').trim();
-    const ticker= String(row[6]||'').trim().toUpperCase();
-    const buyPx = parseNum(row[7]);
-    const qty   = parseNum(row[8]);
-    if(!name) return;
-    if(market!=='US'&&market!=='KR') return;
-    if(cat1) lastCat1=cat1;
-    if(cat2) lastCat2=cat2;
-    // 현금성 자산 티커 목록 — 현금비중에 포함, 가격은 Yahoo로 계산
-    const CASH_LIKE_TICKERS = ['SGOV'];
-    const isCashLike = CASH_LIKE_TICKERS.includes(ticker);
-    // 현금성 자산 이름 키워드 — 현금비중에 포함, 금액은 qty 그대로
-    const CASH_LIKE_NAMES = ['MMF','RP/Cash','현금'];
-    const isCashName = CASH_LIKE_NAMES.some(k=>name.includes(k));
-    // 순수 현금/보증금/청약: 티커 없고 금액만 있는 경우
-    if(!ticker||isCashName) {
-      const amt = qty>0 ? qty : buyPx>0 ? buyPx : parseNum(row[row.length-1]);
-      if(amt>0) stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker:ticker||'CASH_'+name,buyPx:0,qty:amt,isCash:true,isCashLike:false});
-      return;
-    }
-    stocks.push({cat1:lastCat1,cat2:lastCat2,market,name,ticker,buyPx,qty,isCash:false,isCashLike});
+    const assetType = String(row[2]||'').trim();
+    const method    = String(row[3]||'').trim();
+    const account   = String(row[4]||'').trim();
+    const market    = String(row[5]||'').trim().toUpperCase();
+    const name      = String(row[6]||'').trim();
+    const ticker    = String(row[7]||'').trim().toUpperCase();
+    const buyPx     = parseNum(row[8]);
+    const qty       = parseNum(row[9]);
+    if(!name||!assetType) return;
+    const isCash     = method==='현금';
+    const isCashLike = method==='현금성';
+    const isFixed    = method==='고정';
+    stocks.push({ assetType, method, account, market, name, ticker, buyPx, qty, isCash, isCashLike, isFixed });
   });
   return stocks;
 }
@@ -437,7 +423,10 @@ function calcRSI(closes,period) {
 
 async function fetchAllPrices() {
   S.fx=await fetchPrice('USDKRW=X');
-  const tickers=[...new Set(S.stocks.filter(s=>!s.isCash).map(s=>s.market==='KR'?s.ticker+'.KS':s.ticker))];
+  // 현금/고정 제외, 현금성(SGOV 등)은 포함하여 가격 수집
+  const tickers=[...new Set(S.stocks
+    .filter(s=>!s.isCash&&!s.isFixed&&s.ticker&&!s.ticker.startsWith('CASH_')&&!s.ticker.startsWith('MMF')&&!s.ticker.startsWith('DEPOSIT')&&!s.ticker.startsWith('SAVINGS'))
+    .map(s=>s.market==='KR'?s.ticker+'.KS':s.ticker))];
   await Promise.all(tickers.map(async t=>{
     const base=t.replace('.KS','');
     const d=await fetchPrice(t);
@@ -448,13 +437,14 @@ async function fetchAllPrices() {
 // ── 계산 ──
 const fxRate=()=>S.fx?.cur||1;
 function evalKRW(s) {
-  if(s.isCash) return s.qty;
+  if(s.isCash) return s.qty;          // 현금: qty = 금액 그대로
+  if(s.isFixed) return s.qty;         // 고정: qty = 금액 그대로
   const p=S.prices[s.ticker];
-  if(!p) return 0;
+  if(!p) return s.buyPx*s.qty*(s.market==='US'?fxRate():1); // 가격 없으면 매수금액으로
   return s.market==='US' ? p.cur*s.qty*fxRate() : p.cur*s.qty;
 }
 function buyKRW(s) {
-  if(s.isCash) return s.qty;
+  if(s.isCash||s.isFixed) return s.qty;
   if(!s.buyPx||!s.qty) return 0;
   return s.market==='US' ? s.buyPx*s.qty*fxRate() : s.buyPx*s.qty;
 }
@@ -494,23 +484,22 @@ function renderBriefing() {
   S.stocks.forEach(s=>{totalEval+=evalKRW(s);totalBuy+=buyKRW(s);});
   const totalPnl=totalEval-totalBuy;
   const totalPct=totalBuy>0?totalPnl/totalBuy*100:0;
-  const EXCLUDE_CASH=['보증금','주택청약'];
-  const cashAmt=S.stocks
-    .filter(s=>s.isCash&&!EXCLUDE_CASH.some(k=>s.name.includes(k)))
-    .reduce((a,s)=>a+s.qty,0)
+  // 현금비중: 현금(isCash) + 현금성(isCashLike) 포함, 고정(isFixed) 제외
+  const cashAmt = S.stocks.filter(s=>s.isCash).reduce((a,s)=>a+s.qty,0)
     + S.stocks.filter(s=>s.isCashLike).reduce((a,s)=>a+evalKRW(s),0);
   const cashPct=totalEval>0?cashAmt/totalEval*100:0;
   const cashOk=cashPct>=S.cfg.cashMin&&cashPct<=S.cfg.cashMax;
   const fxCur=S.fx?.cur;
   const fxDiff=S.fx?.p1d?S.fx.cur-S.fx.p1d:null;
 
-  // cat1 그룹
+  // 그룹핑: 자산유형 기준
   const catMap={};
   S.stocks.forEach(s=>{
-    if(!catMap[s.cat1]) catMap[s.cat1]={stocks:[],eval:0,buy:0};
-    catMap[s.cat1].stocks.push(s);
-    catMap[s.cat1].eval+=evalKRW(s);
-    catMap[s.cat1].buy+=buyKRW(s);
+    const key = s.assetType||'기타';
+    if(!catMap[key]) catMap[key]={stocks:[],eval:0,buy:0};
+    catMap[key].stocks.push(s);
+    catMap[key].eval+=evalKRW(s);
+    catMap[key].buy+=buyKRW(s);
   });
 
   let html=`
@@ -585,7 +574,7 @@ function renderBriefing() {
               const pnlS=ev-by,pctS=by>0?pnlS/by*100:0;
               const day=s.isCash?null:dayChg(s);
               return `<tr>
-                <td><div class="tn">${s.name}</div><div class="ts">${s.isCash?'현금':s.ticker}</div></td>
+                <td><div class="tn">${s.name}</div><div class="ts">${s.method==='현금'||s.method==='고정'?s.method:s.ticker} <span style="color:var(--text3);font-size:10px;">${s.account||''}</span></div></td>
                 <td>${by>0?F.won(by):'—'}</td>
                 <td>${F.won(ev)}</td>
                 <td class="${C(pnlS)}">${by>0?(pnlS>=0?'+':'')+F.won(pnlS):'—'}</td>
