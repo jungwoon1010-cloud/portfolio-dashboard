@@ -128,6 +128,7 @@ tr:hover td{background:rgba(255,255,255,.015);}
   <button class="nb" onclick="nav('analysis',this)" title="분석">📈</button>
   <div class="ndiv"></div>
   <button class="nb" onclick="nav('targets',this)" title="목표비중">🎯</button>
+  <button class="nb" onclick="nav('upload',this)" title="잔고 업로드">📂</button>
   <button class="nb" onclick="nav('settings',this)" title="설정">⚙️</button>
 </nav>
 <main class="main">
@@ -155,6 +156,40 @@ tr:hover td{background:rgba(255,255,255,.015);}
   </div>
 </div>
 
+<div id="pg-upload" class="pg">
+  <div class="card">
+    <div class="card-title">잔고 파일 업로드 <span style="color:var(--text3);font-weight:400;font-size:11px;">— 증권사 실시간 계좌평가 엑셀</span></div>
+    <div id="drop-zone" style="border:1.5px dashed var(--border2);border-radius:10px;padding:40px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:14px;"
+      ondragover="event.preventDefault();this.style.borderColor='var(--acc)'"
+      ondragleave="this.style.borderColor='var(--border2)'"
+      ondrop="handleDrop(event)"
+      onclick="document.getElementById('file-input').click()">
+      <div style="font-size:24px;margin-bottom:8px;">📂</div>
+      <div style="font-size:13px;color:var(--text2);">파일을 여기에 드래그하거나 클릭해서 선택</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;">.xls / .xlsx 지원 · 메리츠증권 등</div>
+    </div>
+    <input type="file" id="file-input" accept=".xls,.xlsx" style="display:none" onchange="handleFile(this.files[0])">
+    <div id="upload-status"></div>
+  </div>
+  <div class="card" id="preview-card" style="display:none;">
+    <div class="card-title">
+      미리보기 <span id="preview-broker" style="color:var(--acc);font-weight:400;font-size:11px;"></span>
+      <button class="btn btn-p btn-sm" onclick="applyToSheet()">구글 시트 업데이트</button>
+    </div>
+    <div id="preview-msg" style="font-size:12px;color:var(--text3);margin-bottom:10px;"></div>
+    <table class="cmp-table" id="preview-table">
+      <thead><tr>
+        <th style="text-align:left;">종목코드</th>
+        <th style="text-align:left;">종목명</th>
+        <th>보유수량</th>
+        <th>매입가</th>
+        <th>시트 매칭</th>
+      </tr></thead>
+      <tbody id="preview-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
 <div id="pg-settings" class="pg">
   <div class="card">
     <div class="card-title">연결 설정</div>
@@ -172,6 +207,10 @@ tr:hover td{background:rgba(255,255,255,.015);}
     <div class="fg">
       <div class="fl">매수종목 탭 이름</div>
       <input class="fi" id="set-tab" placeholder="매수종목">
+    </div>
+    <div class="fg">
+      <div class="fl">Apps Script 웹훅 URL</div>
+      <input class="fi" id="set-webhook" placeholder="https://script.google.com/macros/s/...">
     </div>
     <button class="btn btn-p" onclick="saveAndLoad()" style="margin-top:4px;">저장 후 불러오기</button>
     <div class="ok" id="set-ok" style="display:none;margin-top:8px;"></div>
@@ -213,6 +252,7 @@ function renderSettings() {
   document.getElementById('set-key').value=S.cfg.key||'';
   document.getElementById('set-sid').value=S.cfg.sid||'';
   document.getElementById('set-tab').value=S.cfg.tab||'매수종목';
+  document.getElementById('set-webhook').value=S.cfg.webhook||'';
 }
 function togglePw() {
   const el=document.getElementById('set-key');
@@ -222,6 +262,7 @@ function saveAndLoad() {
   S.cfg.key=document.getElementById('set-key').value.trim();
   S.cfg.sid=document.getElementById('set-sid').value.trim();
   S.cfg.tab=document.getElementById('set-tab').value.trim()||'매수종목';
+  S.cfg.webhook=document.getElementById('set-webhook').value.trim();
   persist();
   loadAll();
 }
@@ -656,6 +697,144 @@ function toggle(id) {
 hydrate();
 renderSettings();
 if(S.cfg.key) loadAll();
+
+// ── 잔고 파일 파싱 ──────────────────────────────
+// 증권사별 컬럼 매핑
+const BROKERS = {
+  merritz: {
+    name: '메리츠증권',
+    detect: cols => cols.includes('종목코드') && cols.includes('매입가') && cols.includes('평가손익'),
+    headerRow: 0,
+    cols: { code: '종목코드', name: '종목명', qty: '보유수량', buyPx: '매입가' },
+  },
+  // 추후 다른 증권사 추가
+};
+
+let parsedRows = [];
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').style.borderColor = 'var(--border2)';
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+}
+
+function handleFile(file) {
+  if (!file) return;
+  const status = document.getElementById('upload-status');
+  status.innerHTML = `<div style="font-size:12px;color:var(--text3);">읽는 중... ${file.name}</div>`;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      parseBalanceFile(rows, file.name);
+    } catch(err) {
+      status.innerHTML = `<div class="err">파일 읽기 실패: ${err.message}</div>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseBalanceFile(rows, filename) {
+  const status = document.getElementById('upload-status');
+  // 헤더 행 찾기
+  let headerIdx = -1, broker = null;
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const cols = rows[i].map(c => String(c).trim());
+    for (const [key, b] of Object.entries(BROKERS)) {
+      if (b.detect(cols)) { headerIdx = i; broker = b; break; }
+    }
+    if (broker) break;
+  }
+  if (!broker) {
+    status.innerHTML = `<div class="err">증권사 양식을 인식하지 못했습니다. 현재 지원: 메리츠증권</div>`;
+    return;
+  }
+  const headers = rows[headerIdx].map(c => String(c).trim());
+  const codeIdx = headers.indexOf(broker.cols.code);
+  const nameIdx = headers.indexOf(broker.cols.name);
+  const qtyIdx  = headers.indexOf(broker.cols.qty);
+  const pxIdx   = headers.indexOf(broker.cols.buyPx);
+
+  parsedRows = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const code = String(row[codeIdx]||'').trim();
+    const name = String(row[nameIdx]||'').trim();
+    const qty  = parseFloat(String(row[qtyIdx]||'').replace(/,/g,''))||0;
+    const px   = parseFloat(String(row[pxIdx]||'').replace(/,/g,''))||0;
+    if (!code || !name || qty === 0) continue;
+    // 시트 매칭
+    const matched = S.stocks.find(s => s.ticker === code || s.name.includes(name.slice(0,3)));
+    parsedRows.push({ code, name, qty, buyPx: px, matched: matched?.name || null });
+  }
+
+  // 미리보기
+  document.getElementById('preview-broker').textContent = broker.name + ' · ' + parsedRows.length + '개 종목';
+  document.getElementById('preview-msg').textContent =
+    `구글 시트 매수종목 탭에서 종목코드 매칭 후 매입가·수량을 업데이트합니다.`;
+  const tbody = document.getElementById('preview-tbody');
+  tbody.innerHTML = parsedRows.map(r => `
+    <tr>
+      <td style="font-family:var(--mono);">${r.code}</td>
+      <td>${r.name}</td>
+      <td style="text-align:right;font-family:var(--mono);">${r.qty.toLocaleString()}</td>
+      <td style="text-align:right;font-family:var(--mono);">${r.buyPx.toLocaleString()}</td>
+      <td style="text-align:center;font-size:11px;">${r.matched
+        ? `<span style="color:var(--pos);">✓ ${r.matched}</span>`
+        : `<span style="color:var(--warn);">미매칭</span>`}</td>
+    </tr>`).join('');
+  document.getElementById('preview-card').style.display = 'block';
+  status.innerHTML = '';
+}
+
+async function applyToSheet() {
+  const {webhook, tab} = S.cfg;
+  if (!webhook) { alert('설정에서 Apps Script 웹훅 URL을 입력해주세요'); return; }
+  if (!parsedRows.length) { alert('먼저 파일을 업로드해주세요'); return; }
+
+  const matched = parsedRows.filter(r => r.matched);
+  if (!matched.length) { alert('매칭된 종목이 없어요. 종목코드를 확인해주세요.'); return; }
+
+  const btn = event.target;
+  btn.textContent = '업데이트 중...';
+  btn.disabled = true;
+
+  try {
+    const payload = {
+      tab,
+      updates: parsedRows.map(r => ({
+        code: r.code,
+        buyPx: r.buyPx,
+        qty: r.qty,
+      }))
+    };
+
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      mode: 'no-cors', // Apps Script는 CORS 헤더 없음
+    });
+
+    // no-cors라 응답 못 읽음 → 성공으로 간주
+    document.getElementById('upload-status').innerHTML =
+      `<div style="font-size:12px;color:var(--pos);margin-top:8px;">✓ ${parsedRows.length}개 종목 업데이트 요청 완료. 시트를 확인해주세요.</div>`;
+    btn.textContent = '구글 시트 업데이트';
+    btn.disabled = false;
+
+    // 새로고침 유도
+    setTimeout(() => { if(confirm('대시보드를 새로고침 할까요?')) loadAll(); }, 1000);
+  } catch(e) {
+    alert('오류: ' + e.message);
+    btn.textContent = '구글 시트 업데이트';
+    btn.disabled = false;
+  }
+}
 </script>
 </body>
 </html>
