@@ -926,31 +926,62 @@ function parseBalanceFile(rows, filename) {
   if (unmatched.length > 0) {
     unmatchedSection.style.display = 'block';
     document.getElementById('unmatched-rows').innerHTML = unmatched.map((r, i) => {
-      // 파서가 이미 알고 있는 account/group을 기본값으로 사용
       const defAccount = r.account || '메리츠-국내';
       const defGroup   = r.group   || 'Pluto-국내';
       const defAsset   = (defAccount.includes('삼성-연금') || defAccount.includes('삼성-IRP')) ? '연금IRP'
                        : defAccount.includes('해외') ? '미국' : '한국';
       const defMkt     = defAccount.includes('해외') ? 'US' : 'KR';
-      const assetList  = ['한국','미국','연금IRP','기타'];
-      const groupList  = ['개별-국내','Pluto-국내','현금성-국내','개별-미국','Pluto-미국','현금성-미국','연금저축-종목','연금저축-현금','IRP-종목','IRP-현금','보증금','주택청약'];
-      const acctList   = ['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP','직접입력'];
-      const sel = (list, def) => list.map(v=>`<option${v===def?' selected':''}>${v}</option>`).join('');
-      return `<div style="display:grid;grid-template-columns:80px 1fr 90px 140px 110px 70px;gap:6px;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--border);">
-        <span style="font-family:var(--mono);font-size:11px;color:var(--text3);">${r.code||'—'}</span>
-        <span style="font-size:12px;">${r.name}</span>
-        <select class="fs" id="um-asset-${i}" style="font-size:11px;padding:4px 6px;">${sel(assetList,defAsset)}</select>
-        <select class="fs" id="um-group-${i}" style="font-size:11px;padding:4px 6px;">${sel(groupList,defGroup)}</select>
-        <select class="fs" id="um-account-${i}" style="font-size:11px;padding:4px 6px;">${sel(acctList,defAccount)}</select>
-        <select class="fs" id="um-mkt-${i}" style="font-size:11px;padding:4px 6px;">
-          <option value="KR"${defMkt==='KR'?' selected':''}>KR</option>
-          <option value="US"${defMkt==='US'?' selected':''}>US</option>
-        </select>
+
+      const getOpts = (asset) => {
+        const m = UM_MAP[asset] || UM_MAP['한국'];
+        const grp = m.groups.includes(defGroup) ? defGroup : m.groups[0];
+        const acc = m.accounts.includes(defAccount) ? defAccount : m.accounts[0];
+        return { groups: m.groups, accounts: m.accounts, mkt: m.mkt, grp, acc };
+      };
+
+      const initOpts = getOpts(defAsset);
+
+      return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--text3);width:70px;flex-shrink:0;">${r.code||'—'}</span>
+          <span style="font-size:12px;flex:1;min-width:120px;">${r.name}</span>
+          <select class="fs" id="um-asset-${i}" onchange="umRefresh(${i})"
+            style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
+            ${['한국','미국','연금IRP','기타'].map(v=>`<option${v===defAsset?' selected':''}>${v}</option>`).join('')}
+          </select>
+          <select class="fs" id="um-group-${i}"
+            style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
+            ${initOpts.groups.map(v=>`<option${v===initOpts.grp?' selected':''}>${v}</option>`).join('')}
+          </select>
+          <select class="fs" id="um-account-${i}"
+            style="font-size:11px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);">
+            ${initOpts.accounts.map(v=>`<option${v===initOpts.acc?' selected':''}>${v}</option>`).join('')}
+          </select>
+          <input type="hidden" id="um-mkt-${i}" value="${initOpts.mkt}">
+        </div>
       </div>`;
     }).join('');
   } else {
     unmatchedSection.style.display = 'none';
   }
+}
+
+// 자산유형 변경 시 그룹/계좌/시장 연동 업데이트
+const UM_MAP = {
+  '한국':    { groups:['개별-국내','Pluto-국내','현금성-국내'], accounts:['메리츠-국내'], mkt:'KR' },
+  '미국':    { groups:['개별-미국','Pluto-미국','현금성-미국'], accounts:['메리츠-해외'], mkt:'US' },
+  '연금IRP': { groups:['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'], accounts:['삼성-연금','삼성-IRP'], mkt:'KR' },
+  '기타':    { groups:['보증금','주택청약'], accounts:['메리츠-국내','메리츠-해외','삼성-연금','삼성-IRP'], mkt:'KR' },
+};
+function umRefresh(i) {
+  const asset = document.getElementById(`um-asset-${i}`).value;
+  const m = UM_MAP[asset] || UM_MAP['한국'];
+  const grpEl = document.getElementById(`um-group-${i}`);
+  const accEl = document.getElementById(`um-account-${i}`);
+  const mktEl = document.getElementById(`um-mkt-${i}`);
+  grpEl.innerHTML = m.groups.map(v=>`<option>${v}</option>`).join('');
+  accEl.innerHTML = m.accounts.map(v=>`<option>${v}</option>`).join('');
+  mktEl.value = m.mkt;
 }
 
 async function addNewStocks() {
