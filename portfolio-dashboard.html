@@ -562,18 +562,72 @@ function renderBriefing() {
     </div>
   </div>`;
 
+  // 그룹 순서 정의
+  const GROUP_ORDER = {
+    '미국':    ['개별-미국','Pluto-미국','현금성-미국'],
+    '한국':    ['개별-국내','Pluto-국내','현금성-국내'],
+    '연금IRP': ['연금저축-종목','연금저축-현금','IRP-종목','IRP-현금'],
+    '기타':    ['보증금','주택청약'],
+  };
+
   Object.entries(catMap).forEach(([cat,g],gi)=>{
     const gid='g'+gi;
     const pnl=g.eval-g.buy;
     const pct=g.buy>0?pnl/g.buy*100:0;
     let dW=0,dS=0;
-    g.stocks.filter(s=>!s.isCash).forEach(s=>{
+    g.stocks.filter(s=>!s.isCash&&!s.isFixed).forEach(s=>{
       const d=dayChg(s),e=evalKRW(s);
       if(d!=null&&e>0){dS+=d*e;dW+=e;}
     });
     const dayG=dW>0?dS/dW:null;
+    const orderedGroups=GROUP_ORDER[cat]||Object.keys(g.groups||{});
+
+    // 2단계: 그룹별 소계
+    const subGroupHtml=orderedGroups.map((grpName,sgi)=>{
+      const sg=(g.groups||{})[grpName];
+      if(!sg||!sg.stocks.length) return '';
+      const sgid=gid+'s'+sgi;
+      const spnl=sg.eval-sg.buy;
+      const spct=sg.buy>0?spnl/sg.buy*100:0;
+      let sdW=0,sdS=0;
+      sg.stocks.filter(s=>!s.isCash&&!s.isFixed).forEach(s=>{
+        const d=dayChg(s),e=evalKRW(s);
+        if(d!=null&&e>0){sdS+=d*e;sdW+=e;}
+      });
+      const sdayG=sdW>0?sdS/sdW:null;
+      return '<div class="grp" id="'+sgid+'" style="border-radius:0;border:none;border-bottom:0.5px solid var(--border);margin:0;">'+
+        '<div class="ghd" style="background:var(--bg3);" onclick="toggle(''+sgid+'')">'+
+          '<div class="gtw" style="min-width:140px;padding-left:28px;"><div class="gt" style="font-size:11px;color:var(--text2);">'+grpName+'</div></div>'+
+          '<div class="gst">'+
+            '<div class="gc"><div class="gcl">평가금액</div><div class="gcv" style="font-size:12px;">'+F.won(sg.eval)+'원</div></div>'+
+            '<div class="gc"><div class="gcl">손익</div><div class="gcv '+C(spnl)+'" style="font-size:12px;">'+(spnl>=0?'+':'')+F.won(spnl)+'원</div></div>'+
+            '<div class="gc"><div class="gcl">수익률</div><div class="gcv '+C(spct)+'" style="font-size:12px;">'+F.pct(spct)+'</div></div>'+
+            '<div class="gc"><div class="gcl">전일대비</div><div class="gcv '+C(sdayG)+'" style="font-size:12px;">'+F.pct(sdayG)+'</div></div>'+
+          '</div>'+
+          '<div class="gchev" id="'+sgid+'-ch" style="font-size:10px;">▾</div>'+
+        '</div>'+
+        '<div class="tbw" id="'+sgid+'-body">'+
+          '<table><thead><tr><th>종목</th><th>매수금액</th><th>평가금액</th><th>손익</th><th>수익률</th><th>전일대비</th></tr></thead><tbody>'+
+          sg.stocks.map(s=>{
+            const ev=evalKRW(s),by=buyKRW(s);
+            const pnlS=ev-by,pctS=by>0?pnlS/by*100:0;
+            const day=(s.isCash||s.isFixed)?null:dayChg(s);
+            return '<tr>'+
+              '<td><div class="tn">'+s.name+'</div><div class="ts" style="font-size:10px;color:var(--text3);">'+s.ticker+' '+s.account+'</div></td>'+
+              '<td>'+(by>0?F.won(by):'—')+'</td>'+
+              '<td>'+F.won(ev)+'</td>'+
+              '<td class="'+C(pnlS)+'">'+(by>0?(pnlS>=0?'+':'')+F.won(pnlS):'—')+'</td>'+
+              '<td class="'+C(pctS)+'">'+(by>0?F.pct(pctS):'—')+'</td>'+
+              '<td class="'+C(day)+'">'+F.pct(day)+'</td>'+
+            '</tr>';
+          }).join('')+
+          '</tbody></table>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+
     html+=`
-    <div class="grp" id="${gid}">
+    <div class="grp" id="${gid}" style="margin-bottom:8px;">
       <div class="ghd" onclick="toggle('${gid}')">
         <div class="gtw"><div class="gt">${cat}</div></div>
         <div class="gst">
@@ -584,25 +638,8 @@ function renderBriefing() {
         </div>
         <div class="gchev" id="${gid}-ch">▾</div>
       </div>
-      <div class="tbw" id="${gid}-body">
-        <table>
-          <thead><tr><th>종목</th><th>매수금액</th><th>평가금액</th><th>손익</th><th>수익률</th><th>전일대비</th></tr></thead>
-          <tbody>
-            ${g.stocks.map(s=>{
-              const ev=evalKRW(s),by=buyKRW(s);
-              const pnlS=ev-by,pctS=by>0?pnlS/by*100:0;
-              const day=s.isCash?null:dayChg(s);
-              return `<tr>
-                <td><div class="tn">${s.name}</div><div class="ts">${s.ticker||s.group} <span style="color:var(--text3);font-size:10px;">${s.account||''}</span></div></td>
-                <td>${by>0?F.won(by):'—'}</td>
-                <td>${F.won(ev)}</td>
-                <td class="${C(pnlS)}">${by>0?(pnlS>=0?'+':'')+F.won(pnlS):'—'}</td>
-                <td class="${C(pctS)}">${by>0?F.pct(pctS):'—'}</td>
-                <td class="${C(day)}">${F.pct(day)}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
+      <div class="tbw" id="${gid}-body" style="border-top:1px solid var(--border);">
+        ${subGroupHtml}
       </div>
     </div>`;
   });
